@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "hooks": {
+    "SessionStart": [
+      { "type": "command", "bash": "node --no-warnings \"$PLUGIN_ROOT/scripts/session-start.mjs\"", "powershell": "[Console]::InputEncoding=[Console]::OutputEncoding=$OutputEncoding=[Text.UTF8Encoding]::new($false); node --no-warnings \"$($env:PLUGIN_ROOT)/scripts/session-start.mjs\"", "timeoutSec": 15 }
+    ],
+    "UserPromptSubmit": [
+      { "type": "command", "bash": "node --no-warnings \"$PLUGIN_ROOT/scripts/track-prompt.mjs\"", "powershell": "[Console]::InputEncoding=[Console]::OutputEncoding=$OutputEncoding=[Text.UTF8Encoding]::new($false); node --no-warnings \"$($env:PLUGIN_ROOT)/scripts/track-prompt.mjs\"", "timeoutSec": 5 }
+    ],
+    "PostToolUse": [
+      { "type": "command", "matcher": "Bash|bash|powershell", "bash": "node --no-warnings \"$PLUGIN_ROOT/scripts/checkpoint.mjs\"", "powershell": "[Console]::InputEncoding=[Console]::OutputEncoding=$OutputEncoding=[Text.UTF8Encoding]::new($false); node --no-warnings \"$($env:PLUGIN_ROOT)/scripts/checkpoint.mjs\"", "timeoutSec": 10 },
+      { "type": "command", "bash": "node --no-warnings \"$PLUGIN_ROOT/scripts/pulse.mjs\"", "powershell": "[Console]::InputEncoding=[Console]::OutputEncoding=$OutputEncoding=[Text.UTF8Encoding]::new($false); node --no-warnings \"$($env:PLUGIN_ROOT)/scripts/pulse.mjs\"", "timeoutSec": 10 }
+    ],
+    "PermissionRequest": [
+      { "type": "command", "bash": "node --no-warnings \"$PLUGIN_ROOT/scripts/permission-request.mjs\"", "powershell": "[Console]::InputEncoding=[Console]::OutputEncoding=$OutputEncoding=[Text.UTF8Encoding]::new($false); node --no-warnings \"$($env:PLUGIN_ROOT)/scripts/permission-request.mjs\"", "timeoutSec": 5 }
+    ],
+    "subagentStart": [
+      { "type": "command", "bash": "node --no-warnings \"$PLUGIN_ROOT/scripts/subagent-start.mjs\"", "powershell": "[Console]::InputEncoding=[Console]::OutputEncoding=$OutputEncoding=[Text.UTF8Encoding]::new($false); node --no-warnings \"$($env:PLUGIN_ROOT)/scripts/subagent-start.mjs\"", "timeoutSec": 5 }
+    ],
+    "SubagentStop": [
+      { "type": "command", "bash": "node --no-warnings \"$PLUGIN_ROOT/scripts/subagent-stop.mjs\"", "powershell": "[Console]::InputEncoding=[Console]::OutputEncoding=$OutputEncoding=[Text.UTF8Encoding]::new($false); node --no-warnings \"$($env:PLUGIN_ROOT)/scripts/subagent-stop.mjs\"", "timeoutSec": 5 }
+    ],
+    "Stop": [
+      { "type": "command", "bash": "node --no-warnings \"$PLUGIN_ROOT/scripts/stop.mjs\"", "powershell": "[Console]::InputEncoding=[Console]::OutputEncoding=$OutputEncoding=[Text.UTF8Encoding]::new($false); node --no-warnings \"$($env:PLUGIN_ROOT)/scripts/stop.mjs\"", "timeoutSec": 15 }
+    ],
+    "SessionEnd": [
+      { "type": "command", "bash": "node --no-warnings \"$PLUGIN_ROOT/scripts/report.mjs\"", "powershell": "[Console]::InputEncoding=[Console]::OutputEncoding=$OutputEncoding=[Text.UTF8Encoding]::new($false); node --no-warnings \"$($env:PLUGIN_ROOT)/scripts/report.mjs\"", "timeoutSec": 15 }
+    ],
+    "ErrorOccurred": [
+      { "type": "command", "bash": "node --no-warnings \"$PLUGIN_ROOT/scripts/error-occurred.mjs\"", "powershell": "[Console]::InputEncoding=[Console]::OutputEncoding=$OutputEncoding=[Text.UTF8Encoding]::new($false); node --no-warnings \"$($env:PLUGIN_ROOT)/scripts/error-occurred.mjs\"", "timeoutSec": 10 }
+    ],
+    "PreCompact": [
+      { "type": "command", "bash": "node --no-warnings \"$PLUGIN_ROOT/scripts/pulse.mjs\" --precompact", "powershell": "[Console]::InputEncoding=[Console]::OutputEncoding=$OutputEncoding=[Text.UTF8Encoding]::new($false); node --no-warnings \"$($env:PLUGIN_ROOT)/scripts/pulse.mjs\" --precompact", "timeoutSec": 10 }
+    ]
+  }
+}

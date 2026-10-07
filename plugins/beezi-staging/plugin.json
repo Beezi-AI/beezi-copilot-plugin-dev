@@ -1,0 +1,17 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "beezi-staging",
+  "version": "0.5.1-staging.5630",
+  "description": "Reports GitHub Copilot session token and AI-credit analytics to Beezi, attributed to repo and branch, and adds the Beezi MCP tools. — staging environment build.",
+  "author": {
+    "name": "Beezi"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "analytics",
+    "token-usage",
+    "beezi",
+    "telemetry",
+    "copilot"
+  ]
+}
