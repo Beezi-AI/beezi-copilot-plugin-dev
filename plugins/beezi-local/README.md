@@ -10,13 +10,46 @@ cost capture, plan handling and the hooks are written for Copilot. A module that
 Claude Code plugin but not here was removed on purpose because it has no Copilot meaning (cost-state
 capture, key resolution, Cowork tracking and similar).
 
-Install, sign-in and what Beezi receives are in the [repository README](../../README.md). This file is
-about how the plugin works. Host behaviour that has not been measured on a real Copilot build is
+Install and sign-in are in the [repository README](../../README.md). This file is about what the
+plugin sends and how it works. Host behaviour that has not been measured on a real Copilot build is
 marked "unverified" in its sentence.
 
-## Package layout
+## What this plugin sends
 
-<!-- gate: V-01 -->
+**Sent, per session:**
+
+- model names, and token counts (input, output, cache read and write);
+- the peak and final size of the context window, with its model name;
+- AI credits and premium requests, as Copilot records them;
+- tool-call counts by category (file, search, internet, MCP, shell, skill, other), an estimate of
+  how large the results were, and the names of the MCP servers, skills and plugins that were used;
+- durations, and an activity timeline (working, planning, waiting for you, idle);
+- lines added and removed, files changed, and how many changed files have each extension;
+- the branch, and the `origin` remote with credentials stripped (or `local:<folder name>` outside a
+  repository or when there is no remote);
+- Copilot's session name. When Copilot hasn't named the session, that is the start of your first
+  prompt, cut to 200 characters, with anything that looks like a secret or a file path removed;
+- the id, type and name of any subagents;
+- whether the repository has a project instructions file, and how many lines it has;
+- your time zone, and (as request headers) this machine's host name, its Beezi sign-in client id and
+  the plugin version, which Beezi shows in your list of linked machines;
+- your Copilot plan and the GitHub account Copilot is signed in with.
+
+**Sent when a turn fails:** the error class, type, code and status, when it happened, and Copilot's
+error message (cut to 1000 characters).
+
+**Never sent:** your prompts (apart from the session-name fallback above), your code, file contents,
+tool arguments, command text and tool results, and your GitHub or Copilot tokens. Your Beezi sign-in
+is kept in your operating system's secret store when there is one, and otherwise in a file only your
+user account can read.
+
+**Crash reports** are off unless you turn them on in `/beezi-settings`. They carry the plugin, Copilot
+and Node versions, your OS, OS version and CPU type, the plugin file and line that failed, the error's
+name, code and HTTP status, your sign-in state, and how many times and when it happened. If you choose
+"Correlate", a random installation ID also ties them to your Beezi account. They never carry your code,
+prompts, repository names or any path outside the plugin.
+
+## Package layout
 
 The plugin follows the Agent Plugins 1.0 format:
 
@@ -40,7 +73,6 @@ internal build carries its environment name (see [Variants](#variants)). `lib/pa
 PascalCase, which makes Copilot send Claude-style snake_case payloads and Claude tool names
 (`Bash`); `subagentStart` exists only in camelCase and is registered that way. Every script exits 0
 and prints nothing, except `session-start.mjs`, which prints at most one JSON object.
-<!-- gate: V-03, V-04, V-23, V-25 -->
 
 | Event | Script | Work |
 |---|---|---|
@@ -76,7 +108,7 @@ the tool list, a call to one is refused locally, and the bridge replaces the ser
 | `beezi-analytics` | the MCP tools `get_analytics_instructions` and `get_my_usage_summary` (plus `workspace.mjs read` when a workspace is named) |
 
 The interactive skills call `preflight.mjs` first and refuse to continue in autopilot, so an
-auto-answered question can never create a routing rule or grant consent. <!-- gate: V-14, V-39 -->
+auto-answered question can never create a routing rule or grant consent.
 
 Skill names are prefixed `beezi-` because Copilot already has `/login`, `/logout`, `/settings`,
 `/usage` and `/statusline`. Skills name MCP tools bare (`get_analytics_instructions`) and never with a
@@ -87,7 +119,7 @@ server prefix, because Copilot shows tools as `<server>-<tool>` and the server k
 - **Hooks** are the primary path on the Copilot CLI.
 - **The watcher** runs inside the MCP server. It is the primary path on VS Code Agent Host, where hook
   events are only partly delivered, and a safety net everywhere, including when an organisation
-  allows only managed hooks. <!-- gate: V-02, V-31, V-53 --> It is on by default.
+  allows only managed hooks. It is on by default.
   `BEEZI_COPILOT_WATCHER` set to `0`, `false`, `no`, `off` or `disabled` turns it off and loads none
   of its code, because the gate sits before the import in `scripts/mcp.mjs`.
 
@@ -121,10 +153,10 @@ those still happen where `SessionStart` never fires. It writes its notes to
 
 | File | Read for |
 |---|---|
-| `<copilot home>/session-state/<id>/events.jsonl` | every event of a session (append-only lines `{type, id, parentId, timestamp, data}`) <!-- gate: V-05, V-21, V-43 --> |
+| `<copilot home>/session-state/<id>/events.jsonl` | every event of a session (append-only lines `{type, id, parentId, timestamp, data}`) |
 | `<copilot home>/session-state/<id>/workspace.yaml` | the session name |
 | `<copilot home>/session-store.db` | per-call usage rows, opened read-only, only when `node:sqlite` exists (see Token modes) |
-| `<copilot home>/config.json` | the signed-in GitHub login and host (`loggedInUsers`) <!-- gate: V-19 --> |
+| `<copilot home>/config.json` | the signed-in GitHub login and host (`loggedInUsers`) |
 | `<copilot home>/settings.json` | read for `askUser`; written only by the status line install |
 
 `<copilot home>` is `COPILOT_HOME` when set and `~/.copilot` otherwise. Every location comes from
@@ -167,8 +199,6 @@ the Copilot home. The plugin reads them read-only from `Code` and `Code - Inside
   - `/beezi-sync` uploads the rest.
 
 ## Token modes
-
-<!-- gate: V-08, V-09, V-10, V-27, V-41, V-42 -->
 
 - **`per_call`** (the default when Node has `node:sqlite`): every checkpoint reports the
   `assistant_usage_events` rows in `session-store.db` written since the last checkpoint, attributed to
@@ -214,11 +244,10 @@ the Copilot home. The plugin reads them read-only from `Code` and `Code - Inside
 - **The plan is declared, not read.** This build has no local source for the Copilot plan
   (`readLocalPlanRaw` in `lib/copilot-account.mjs` returns nothing), so `/beezi-login` and
   `/beezi-settings` ask the user. A declared plan applies only to the GitHub account it was declared
-  for. <!-- gate: V-19, V-38 -->
+  for.
 - **The account** on a report is `account_uuid`, the lowercase GitHub identity `<host>/<login>`, up to
   64 characters. It is omitted when Copilot is signed in through a token environment variable, or
   has several signed-in users and no active one can be told. No email is sent.
-  <!-- gate: V-19, V-38 -->
 - **One account per session.** Copilot writes no email or user id into a session. The plugin binds
   each session to the account that ran it, so a later account switch never moves an earlier
   session. The first source that names one wins:
@@ -235,7 +264,7 @@ the Copilot home. The plugin reads them read-only from `Code` and `Code - Inside
   the monthly premium-request quota and post it to `/me/copilot/usage` as
   `limits: [{ kind: "monthly", … }]` is present but inert (`SERVER_ARGS` in `lib/quota-copilot.mjs` is
   unset), so no usage snapshot is posted. Copilot does not expose session or weekly rate-limit usage
-  anywhere, and none is reported. <!-- gate: V-36, V-37 -->
+  anywhere, and none is reported.
 
 ## Report contract and backend-first
 
@@ -312,7 +341,7 @@ the vendor from the header.
 | `PLUGIN_ROOT` | set by Copilot | read, not owned: the plugin's install folder |
 
 Which of these variables reach the MCP server process is unverified: Copilot's documentation says a
-server added by hand inherits only `PATH` plus its declared `env`. <!-- gate: V-33 --> Overrides
+server added by hand inherits only `PATH` plus its declared `env`. Overrides
 that the server has to see (`BEEZI_API_URL`, `BEEZI_MCP_URL`, `BEEZI_COPILOT_WATCHER`) work only where
 the server process can see them; an internal build bakes the API into `env.json` and does not depend
 on them.
@@ -335,7 +364,7 @@ Each variant gets its own data root (`~/.beezi-copilot-<env>`), secret-store ser
 
 The renames exist because of Copilot's documented precedence for duplicate names: skills are
 first-found-wins and the duplicate is silently dropped, and MCP servers are last-loaded-wins with a
-warning. Two plugins that share a skill name or a server key cannot both work. <!-- gate: V-34, Q-1 -->
+warning. Two plugins that share a skill name or a server key cannot both work.
 
 ## Updating
 
@@ -344,17 +373,13 @@ marketplace manifest at `env.json` `updateManifestUrl`. The check runs at most o
 up after 1.5 seconds. Being offline, having no manifest URL and an unreadable manifest are all silent.
 The plugin never updates itself. When a newer version is published it prints one line with the
 commands: `copilot plugin marketplace update <marketplace>`, then `copilot plugin update <plugin>`,
-then start a new Copilot session. <!-- gate: V-56, V-06, V-50, V-02 --> `/beezi-status` shows the same
+then start a new Copilot session. `/beezi-status` shows the same
 line.
 
 ## Coexistence
 
 - **Claude Code plugin.** Separate data roots, secret-store services and agent header. The marketplace
-  and MCP server names are distinct too: `beezi-copilot` here against `beezi` there. <!-- gate: V-34, Q-1 -->
-  A Claude Code plugin copy that Copilot loads (installed into Copilot, or turned on by a repository's
-  `.claude/settings.json`) stays inactive from Claude plugin version `<guard version>` on.
-  <!-- gate: G1, V-57 --> Whether VS Code's Local agent can load that plugin is unverified, so it is not
-  covered.
+  and MCP server names are distinct too: `beezi-copilot` here against `beezi` there.
 - **Codex plugin.** Separate data roots.
 
 ## Known caveats
@@ -366,24 +391,23 @@ line.
   The PowerShell hooks force UTF-8. Still unverified on real machines:
   - Windows hook stdin encoding under PowerShell 5.1 and 7;
   - the shell VS Code uses for these hooks on Windows;
-  - whether `shutdown-worker.mjs` survives Copilot exiting (V-29);
+  - whether `shutdown-worker.mjs` survives Copilot exiting;
   - Credential Manager limits;
   - Linux keyring behaviour on desktop and headless machines.
 - In `copilot -p` mode `SessionEnd` fires on every turn, so nothing in `report.mjs` is one-shot.
-  <!-- gate: V-07 -->
 - The built-in `general-purpose` subagent fires no subagent hooks. Its events are still in
   `events.jsonl`.
 - `ErrorOccurred` replaces the Claude `StopFailure`. It carries no HTTP status; the status comes from
-  the `session.error` events in the session file. <!-- gate: V-22 -->
+  the `session.error` events in the session file.
 - `PermissionRequest` output is a decision channel, so the script prints nothing at all. Any byte on
   stdout could approve or deny a real prompt.
 - Whether `SessionStart` output shown to the user (`systemMessage`) is honoured by Copilot is
   unverified. The most important actionable notice rides `additionalContext` as one line the model is
-  asked to relay. <!-- gate: V-06, V-50 -->
+  asked to relay.
 - A `node:sqlite` ExperimentalWarning must not reach a hook's stderr, so hook commands run
-  `node --no-warnings`. <!-- gate: V-12 -->
-- On VS Code Agent Host only part of the hook events fire, which is why the watcher exists. <!-- gate: V-02 -->
-- Detached child processes started by a hook are assumed to outlive it (unverified). <!-- gate: V-29 -->
+  `node --no-warnings`.
+- On VS Code Agent Host only part of the hook events fire, which is why the watcher exists.
+- Detached child processes started by a hook are assumed to outlive it (unverified).
 
 ## License
 
