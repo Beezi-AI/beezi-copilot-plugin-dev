@@ -384,3 +384,7 @@ line.
   `node --no-warnings`. <!-- gate: V-12 -->
 - On VS Code Agent Host only part of the hook events fire, which is why the watcher exists. <!-- gate: V-02 -->
 - Detached child processes started by a hook are assumed to outlive it (unverified). <!-- gate: V-29 -->
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).
