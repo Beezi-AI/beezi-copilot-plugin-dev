@@ -1,0 +1,20 @@
+{
+  "name": "beezi-copilot-internal",
+  "owner": {
+    "name": "Beezi"
+  },
+  "metadata": {
+    "description": "Beezi's internal (dev/staging/local) Copilot plugin marketplace."
+  },
+  "plugins": [
+    {
+      "name": "beezi-dev",
+      "source": "./plugins/beezi-dev",
+      "description": "Reports GitHub Copilot session token and AI-credit analytics to Beezi, attributed to repo and branch, and adds the Beezi MCP tools. — dev environment build.",
+      "version": "0.5.0-dev.5616",
+      "author": {
+        "name": "Beezi"
+      }
+    }
+  ]
+}

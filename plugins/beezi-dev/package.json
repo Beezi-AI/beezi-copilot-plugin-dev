@@ -1,0 +1,10 @@
+{
+  "name": "beezi",
+  "version": "0.5.0-dev.5616",
+  "private": true,
+  "type": "module",
+  "description": "Beezi analytics plugin for GitHub Copilot.",
+  "engines": {
+    "node": ">=13.2"
+  }
+}
