@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { vscodeInstalls, vscodeWorkspaceStorageDir, vscodeEmptyWindowSessionsDir, vscodeChatSessionsDir } from './copilot-paths.mjs';
 import { isUsableSessionId } from './session-state.mjs';
+import { isAutoName } from './auto-selection.mjs';
 
 // VS Code's built-in Copilot Chat ("Local" agent) sessions: a kind-0 snapshot plus kind-1/kind-2 patches per line.
 
@@ -235,7 +236,7 @@ function modelName(v) {
   const s = str(v);
   if (s == null) return null;
   const bare = s.replace(MODEL_PREFIX, '');
-  return bare === '' || bare.toLowerCase() === 'auto' ? null : bare;
+  return bare === '' || isAutoName(bare) ? null : bare;
 }
 
 function multiplierOf(details) {

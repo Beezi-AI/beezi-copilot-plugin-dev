@@ -18,11 +18,15 @@ marked "unverified" in its sentence.
 
 **Sent, per session:**
 
-- model names, and token counts (input, output, cache read and write);
+- model names, and token counts (input, output, reasoning, cache read and write);
 - the peak and final size of the context window, with its model name;
 - AI credits and premium requests, as Copilot records them;
+- how many model calls Copilot routed through Auto, and the AI credits those calls used;
+- how many calls had to re-write Copilot's prompt cache (for example after a pause, a model switch or a compaction), how many model switches there were, and the AI credits those calls used (counts only; models that do not report cache writes are never counted as cold);
 - tool-call counts by category (file, search, internet, MCP, shell, skill, other), an estimate of
   how large the results were, and the names of the MCP servers, skills and plugins that were used;
+- per tool, how many calls ran and how many failed, by kind of failure (permission denied, timeout, interrupted, missing file, access or setup, command exited non-zero, other), never the tool's input or output; <!-- gate: V-47 --> the permission-denied kind is unverified;
+- how many times Copilot compacted the context;
 - durations, and an activity timeline (working, planning, waiting for you, idle);
 - lines added and removed, files changed, and how many changed files have each extension;
 - the branch, and the `origin` remote with credentials stripped (or `local:<folder name>` outside a
@@ -30,7 +34,8 @@ marked "unverified" in its sentence.
 - Copilot's session name. When Copilot hasn't named the session, that is the start of your first
   prompt, cut to 200 characters, with anything that looks like a secret or a file path removed;
 - the id, type and name of any subagents;
-- whether the repository has a project instructions file, and how many lines it has;
+- whether the repository has project instructions files, how many lines each has, and each file's path inside the repository (only `.github/copilot-instructions.md`, `AGENTS.md`, `CLAUDE.md` and `GEMINI.md`);
+- whether the session ran in the Copilot CLI or in the GitHub Copilot app (not sent once a session has been resumed: Copilot does not record which client resumed it);
 - your time zone, and (as request headers) this machine's host name, its Beezi sign-in client id and
   the plugin version, which Beezi shows in your list of linked machines;
 - your Copilot plan and the GitHub account Copilot is signed in with.
@@ -222,8 +227,8 @@ the Copilot home. The plugin reads them read-only from `Code` and `Code - Inside
   becomes a session of its own.
 - **Input tokens.** Copilot's `inputTokens` already includes cache reads and cache writes, so
   `token_input` is `inputTokens` minus both, never below zero.
-- **Reasoning tokens.** `token_output` is Copilot's `outputTokens`; reasoning tokens are not added
-  (unverified whether `outputTokens` already includes them).
+- **Reasoning tokens.** `token_output` is Copilot's `outputTokens`, which already contains the reasoning tokens (in the local session store reasoning never exceeds output). The reasoning share is reported separately as `token_reasoning_output`, per model and per effort, and is never added to any total.
+- **Auto and cache counters.** The Auto and cache-rewrite counts are built from per-call rows, so they exist only in `per_call` mode; in `session_totals` mode and in VS Code Local they are absent, not zero.
 - **Resume.** Shutdown totals are cumulative across `--resume`: each shutdown is billed as its
   difference from the previous one in the file, never below zero.
 - **Model names.** `auto` is a routing choice, not a model. The model comes from
@@ -269,8 +274,11 @@ the Copilot home. The plugin reads them read-only from `Code` and `Code - Inside
 ## Report contract and backend-first
 
 Reports use the Claude plugin's `POST /sessions/report` shape plus these optional fields:
-`models.<model>.ai_credits_nano`, `models.<model>.premium_requests`, `ai_credits_nano`,
-`usage_source` and `project_instructions_status`.
+`models.<model>.ai_credits_nano`, `models.<model>.premium_requests`, `models.<model>.token_reasoning_output`,
+`models.<model>.auto_requests`, `models.<model>.auto_ai_credits_nano`, `ai_credits_nano`, `usage_source`,
+`project_instructions_status`, `project_instructions_files`, `cold_prefix_calls`,
+`cold_prefix_ai_credits_nano`, `model_switches`, `idle_cold_calls`, `compactions`, `operations.failures`
+and `source` (`cli` or `app`).
 
 The Beezi API validates reports against a strict whitelist, so **one unknown field rejects the whole
 report**. A field ships in the plugin only after the API change that accepts it is deployed to every

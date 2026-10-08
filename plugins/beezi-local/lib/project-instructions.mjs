@@ -2,6 +2,8 @@ import fs from 'fs';
 import path from 'path';
 
 const CANDIDATES = ['.github/copilot-instructions.md', 'AGENTS.md', 'CLAUDE.md', 'GEMINI.md'];
+// The portal rejects a report whose per-file line count exceeds this.
+const MAX_FILE_LINES = 1000000;
 const UNKNOWN = { project_instructions_status: 'unknown' };
 const MISSING = { project_instructions_status: 'missing' };
 
@@ -22,6 +24,7 @@ export function projectInstructions(repoRoot) {
     return UNKNOWN;
   }
   const seen = new Set();
+  const files = [];
   let present = false;
   let lines = 0;
   for (const rel of CANDIDATES) {
@@ -37,7 +40,9 @@ export function projectInstructions(repoRoot) {
     const key = text.replace(/\r\n/g, '\n').trim();
     if (seen.has(key)) continue;
     seen.add(key);
-    lines += lineCount(text);
+    const count = Math.min(lineCount(text), MAX_FILE_LINES);
+    lines += count;
+    files.push({ path: rel, lines: count });
   }
-  return present ? { project_instructions_status: 'present', claude_md_lines: lines } : MISSING;
+  return present ? { project_instructions_status: 'present', claude_md_lines: lines, project_instructions_files: files } : MISSING;
 }
