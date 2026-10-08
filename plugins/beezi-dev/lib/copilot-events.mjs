@@ -14,6 +14,9 @@ export const EVENT_TYPES = Object.freeze({
   TURN_END: 'assistant.turn_end',
   ASSISTANT_MESSAGE: 'assistant.message',
   TOOL_START: 'tool.execution_start',
+  TOOL_COMPLETE: 'tool.execution_complete',
+  PERMISSION_REQUESTED: 'permission.requested',
+  PERMISSION_COMPLETED: 'permission.completed',
   USER_MESSAGE: 'user.message',
 });
 

@@ -34,7 +34,11 @@ import { readUsageRows, STORE_REASON, isDefinitiveReason, isStoreGone } from './
 import { findSessionFile, readSessionHead } from './transcript-index-copilot.mjs';
 import { acquireSessionLock, CURSOR_TRAIL_MAX, isUsableSessionId, loadSessionState, saveSessionState } from './session-state.mjs';
 import { buildSegments, attributeRows, attributeShutdowns, segmentStats, shutdownKey, hasActivity } from './delta-copilot.mjs';
-import { collectOperations, emptyOperations } from './operations.mjs';
+import { collectOperations, completionsById, emptyOperations } from './operations.mjs';
+import { buildToolIndex, collectToolFailures } from './tool-failures.mjs';
+import { countCompactions } from './compactions.mjs';
+import { clientSurfaceOf } from './client-surface.mjs';
+import { buildAutoTimeline } from './auto-selection.mjs';
 import { collectCodeChanges, emptyCodeChanges } from './code-changes.mjs';
 import { collectErrors } from './error-events.mjs';
 import { collectSubagents, subagentStateMap } from './subagents-copilot.mjs';
@@ -631,6 +635,7 @@ export async function runCheckpoint(input, deps = {}, options = {}) {
       let works;
       let billed = [];
       let lastRowId = null;
+      let nextCalls = null;
       try {
         works = buildSegments(events, { sessionId, fromLine: cursor, toLine, cwd, repoRootOf, branchAt: branchOf, headBranchOf });
         if (useRows) {
@@ -643,10 +648,23 @@ export async function runCheckpoint(input, deps = {}, options = {}) {
           try { idle = Date.now() - fs.statSync(transcript).mtimeMs > FINALIZE_IDLE_MS; } catch { /* keep live */ }
           // A cursor first taken from the server (no local one) may sit past lines already billed elsewhere, so their rows are skipped.
           const allowLate = live && !(state.cursorLine == null && cursor > 0);
-          lastRowId = attributeRows(works, store.rows, events, {
+          // Without the timeline the Auto slice is simply unmeasured.
+          let autoPoints = null;
+          try { autoPoints = buildAutoTimeline(events); } catch { errors.push('collector:auto-selection'); }
+          const attributed = attributeRows(works, store.rows, events, {
             horizonMs, finalize: lastRunFinished(events) || idle, allowLate, windowFromLine: cursor, windowToLine: toLine,
             floorMs: rowFloorMs == null ? -Infinity : rowFloorMs,
-          }).lastRowId;
+            autoPoints,
+            // An audit replays from empty state and never saves it, so it under-counts instead of double-counting.
+            lastCalls: live ? state.lastCalls : {},
+          });
+          if (attributed.coldFailed) {
+            errors.push('collector:cold-prefix');
+            // Partial counters would ship as measured values.
+            for (const w of works) w.cold = null;
+          }
+          lastRowId = attributed.lastRowId;
+          nextCalls = live ? attributed.lastCalls : null;
         } else if (useTotals) {
           const skipIds = live ? new Set(state.reportedShutdownLines.map(shutdownKey)) : new Set();
           billed = attributeShutdowns(works, events, { skipIds }).reported;
@@ -666,7 +684,11 @@ export async function runCheckpoint(input, deps = {}, options = {}) {
       }
 
       // Step 9: collectors and payloads.
-      const ctxBase = { sessionId, cwd, state, allEvents: events, hookErrors };
+      // Whole-file indexes are built once per run and shared by every segment's collectors.
+      const completeById = completionsById(events);
+      let toolIndex = null;
+      try { toolIndex = buildToolIndex(events); } catch { errors.push('collector:tool-failures'); }
+      const ctxBase = { sessionId, cwd, state, allEvents: events, hookErrors, completeById, toolIndex };
       // Identity comes from the whole file on every trigger: the window that named a subagent (its subagent.started)
       // is consumed by whichever checkpoint reaches it first, and a later one would never see it again.
       let subagentList = [];
@@ -689,6 +711,7 @@ export async function runCheckpoint(input, deps = {}, options = {}) {
         return found;
       };
       const timezone = detectTimezone();
+      const surface = clientSurfaceOf(sessionId, transcript, events);
       // Wall clock already billed for this session, as merged [startMs, endMs) intervals. The main stream and
       // every subagent cover the SAME stretch of clock, so a segment bills only the part no earlier one claimed.
       let covered = mergeIntervals(state.coveredIntervals);
@@ -708,11 +731,20 @@ export async function runCheckpoint(input, deps = {}, options = {}) {
           operations = emptyOperations();
           errors.push('collector:operations');
         }
+        // A failed whole-file index is not rebuilt per segment.
+        if (toolIndex != null) {
+          try {
+            const found = collectToolFailures(windowEvents, seg, ctx);
+            operations.failures = found.failures;
+          } catch { errors.push('collector:tool-failures'); }
+        }
         let code_changes;
         try { code_changes = collectCodeChanges(windowEvents, seg, ctx).code_changes; } catch {
           code_changes = emptyCodeChanges();
           errors.push('collector:code-changes');
         }
+        let compactions = 0;
+        try { compactions = isSub ? 0 : countCompactions(windowEvents, seg); } catch { errors.push('collector:compactions'); }
         // A subagent's context window is not the session's: its context fields never ship.
         const { stats, activeIntervals } = segmentStats(work, { includeContext: !isSub });
         // Main works run first and keep their full span; subagents bill only the residual.
@@ -738,6 +770,8 @@ export async function runCheckpoint(input, deps = {}, options = {}) {
           session_name: sessionName,
           ...(timezone ? { timezone } : {}),
           ...instructionsFor(seg.repoRoot),
+          ...(compactions > 0 ? { compactions } : {}),
+          ...(!isSub && surface != null ? { source: surface } : {}),
           ...(isSub ? {
             is_subagent: true,
             agent_id: clamp(seg.agentId, AGENT_NAME_MAX),
@@ -782,6 +816,7 @@ export async function runCheckpoint(input, deps = {}, options = {}) {
           cursorTrail: trailAfter(cur, events, lastEvent),
           usageMode: mode,
           ...(lastRowId == null ? {} : { lastUsageRowId: lastRowId }),
+          ...(nextCalls == null ? {} : { lastCalls: nextCalls }),
           ...(establishing && rowFloorMs != null ? { usageRowFloorMs: rowFloorMs } : {}),
           reportedShutdownLines: [...cur.reportedShutdownLines, ...billed].slice(-MAX_SHUTDOWN_REFS),
           coveredIntervals: covered,

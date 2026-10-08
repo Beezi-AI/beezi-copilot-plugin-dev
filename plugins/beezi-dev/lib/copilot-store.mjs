@@ -24,6 +24,7 @@ const OPTIONAL = {
   cacheReadTokens: 'cache_read_tokens', cacheWriteTokens: 'cache_write_tokens',
   reasoningTokens: 'reasoning_tokens', nanoAiu: 'total_nano_aiu',
   requestMultiplier: 'request_multiplier', reasoningEffort: 'reasoning_effort', initiator: 'initiator',
+  durationMs: 'duration_ms',
 };
 // V-09: created_at (ISO-8601 UTC, set when the call ends) is the real column; the rest are fallbacks.
 const TIME_COLUMNS = ['created_at', 'timestamp', 'created', 'ts'];
@@ -145,11 +146,12 @@ export async function readUsageRows(sessionId, { afterRowId = 0, limit = 5000 } 
         outputTokens: num(r.output_tokens),
         cacheReadTokens: has('cacheReadTokens') ? num(r[OPTIONAL.cacheReadTokens]) : 0,
         cacheWriteTokens: has('cacheWriteTokens') ? num(r[OPTIONAL.cacheWriteTokens]) : 0,
-        reasoningTokens: has('reasoningTokens') ? num(r[OPTIONAL.reasoningTokens]) : 0,
+        reasoningTokens: has('reasoningTokens') ? numOrNull(r[OPTIONAL.reasoningTokens]) : null,
         nanoAiu: has('nanoAiu') ? numOrNull(r[OPTIONAL.nanoAiu]) : null,
         requestMultiplier: has('requestMultiplier') ? numOrNull(r[OPTIONAL.requestMultiplier]) : null,
         reasoningEffort: has('reasoningEffort') ? str(r[OPTIONAL.reasoningEffort]) : null,
         initiator: has('initiator') ? str(r[OPTIONAL.initiator]) : null,
+        durationMs: has('durationMs') ? numOrNull(r[OPTIONAL.durationMs]) : null,
         at: timeColumn == null ? null : isoOf(r[timeColumn]),
       });
     }
