@@ -70,13 +70,3 @@ export function declaredKeyFor(identity) {
   return identity != null && identity.status === IdentityStatus.OK && identity.key != null ? identity.key : '*';
 }
 
-// When the current identity key was first seen, or null while the stored record does not yet describe it.
-// Accepts the R-20 `{ config }` shape or a bare snapshot.
-export function identitySince(input) {
-  const given = input != null && typeof input === 'object' && 'config' in input ? input.config : input;
-  const config = given != null && given.identity !== undefined ? given : readBillingConfig();
-  const identity = config.identity;
-  const last = config.lastIdentity;
-  if (identity == null || identity.status !== IdentityStatus.OK || identity.key == null) return null;
-  return last != null && last.key === identity.key ? last.since : null;
-}
