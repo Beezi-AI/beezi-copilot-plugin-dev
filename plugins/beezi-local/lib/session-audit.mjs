@@ -68,7 +68,7 @@ import {
   linkedAtMs,
   TrackingMode,
 } from './tracking.mjs';
-import { readBillingConfig, identitySince } from './billing-config.mjs';
+import { readBillingConfig } from './billing-config.mjs';
 import { resolveBilling } from './billing.mjs';
 import { accountStamp } from './identity-stamp.mjs';
 import { resolveSessionAccount } from './session-account-copilot.mjs';
@@ -661,14 +661,12 @@ async function runAuditLeased(lease, deps, options) {
 
   // One identity snapshot per run (R-20, I-2): the check-in and every history report name the same account.
   let stamp = {};
-  let since = null;
   let billing = {};
   let snapshot = null;
   const attempt = (fn, fallback) => { try { return fn(); } catch { return fallback; } };
   if (candidates.length > 0) {
     try { snapshot = readBillingConfig(); } catch { snapshot = null; }
     stamp = attempt(() => accountStamp({ config: snapshot }), {});
-    since = attempt(() => identitySince({ config: snapshot }), null);
     billing = attempt(() => resolveBilling({ config: snapshot }), {});
     const registration = attempt(() => buildAccountSyncPayload({ config: snapshot }), {});
 
@@ -986,17 +984,14 @@ async function runAuditLeased(lease, deps, options) {
     const boundKey = isVscode ? null : loadSessionState(id).accountKey;
     const found = isVscode || boundKey != null ? null : resolveSessionAccount(id, { transcriptPath: entry.transcriptPath });
     const account = boundKey != null ? boundKey : (found == null ? null : found.key);
-    // A VS Code report keeps what its checkpoint stamped (its own account, or none): never the run snapshot's identity.
+    // A VS Code report keeps what its checkpoint stamped (its own account, else the current one).
     if (!isVscode && account != null) {
       applyIdentity(reports, {
         stamp: attempt(() => accountStamp({ config: snapshot, account }), {}),
-        since: null,
         billing: attempt(() => resolveBilling({ config: snapshot, account }), {}),
-        startedAt: head.startedAt,
-        bound: true,
       });
     } else if (!isVscode) {
-      applyIdentity(reports, { stamp, since, billing, startedAt: head.startedAt });
+      applyIdentity(reports, { stamp, billing });
     }
 
     // Timeline travels with the session's own chunk. Best-effort: a failure here never blocks the usage upload.
@@ -1041,23 +1036,16 @@ function attemptHead(transcriptPath) {
   }
 }
 
-// A bound session takes its own account's stamp and plan; else one started at or after identitySince() takes the run snapshot's, and an older or unknown one carries none.
-function applyIdentity(reports, { stamp, since, billing, startedAt, bound = false }) {
-  const sinceMs = since == null ? NaN : Date.parse(since);
-  const startedMs = startedAt == null ? NaN : Date.parse(startedAt);
-  const stamped = bound || (Number.isFinite(sinceMs) && Number.isFinite(startedMs) && startedMs >= sinceMs);
+// A bound session takes its own account's stamp and plan; an unbound one takes the run snapshot's (the current account).
+function applyIdentity(reports, { stamp, billing }) {
   for (const report of reports) {
-    if (stamped) {
-      for (const field of ['account_uuid', 'account_email']) {
-        if (stamp[field] != null) report[field] = stamp[field];
-        else delete report[field];
-      }
-      for (const field of ['billing_source', 'subscription_type', 'subscription_plan']) {
-        if (billing[field] != null) report[field] = billing[field];
-        else if (field !== 'billing_source') delete report[field];
-      }
-    } else {
-      for (const field of ['account_uuid', 'account_email', 'subscription_type', 'subscription_plan']) delete report[field];
+    for (const field of ['account_uuid', 'account_email']) {
+      if (stamp[field] != null) report[field] = stamp[field];
+      else delete report[field];
+    }
+    for (const field of ['billing_source', 'subscription_type', 'subscription_plan']) {
+      if (billing[field] != null) report[field] = billing[field];
+      else if (field !== 'billing_source') delete report[field];
     }
   }
 }

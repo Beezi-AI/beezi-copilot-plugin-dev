@@ -196,7 +196,7 @@ the Copilot home. The plugin reads them read-only from `Code` and `Code - Inside
     with no model at all uploads nothing.
 - **Account.** It comes from the Copilot Chat log of the VS Code launch that covered the session,
   else from `state.vscdb`, but only when the session's own account label agrees. Otherwise the
-  session is sent without one; it is never guessed.
+  session takes the account Copilot is signed in as now.
 - **Capture.**
   - The watcher scans these folders whenever any plugin MCP server is running.
   - The plugin's hooks reach these sessions when VS Code runs them (`chat.useHooks`, trusted
@@ -263,8 +263,8 @@ the Copilot home. The plugin reads them read-only from `Code` and `Code - Inside
 
   A live session saves the binding in its state file on the first checkpoint that finds one and
   never re-resolves it. A plan applies only to the account it was declared or observed for. When
-  neither source names an account, a live session takes the current account. In sync and backfill
-  a session started before that account was first seen carries none.
+  neither source names an account, the session takes the current account, live and in sync or
+  backfill alike.
 - **The monthly quota probe is off in this build.** The code that would ask the Copilot runtime for
   the monthly premium-request quota and post it to `/me/copilot/usage` as
   `limits: [{ kind: "monthly", … }]` is present but inert (`SERVER_ARGS` in `lib/quota-copilot.mjs` is
