@@ -1,6 +1,7 @@
 import { readBillingConfig, writeBillingConfig, declaredKeyFor } from './billing-config.mjs';
 import { readLocalPlanRaw, IdentityStatus } from './copilot-account.mjs';
-import { DECLARABLE_PLANS, normalizeCopilotPlan, parseDeclaredPlan, planLabel, resolvePlan } from './billing.mjs';
+import { readVscodeSignedIn } from './vscode-account.mjs';
+import { CopilotPlan, DECLARABLE_PLANS, normalizeCopilotPlan, parseDeclaredPlan, planLabel, resolvePlan } from './billing.mjs';
 import { UserError } from './friendly-error.mjs';
 
 // What a reconcile found, for the callers that print or nudge. Never string-matched inline.
@@ -12,11 +13,11 @@ export const ReconcileOutcome = Object.freeze({
 });
 
 const VIA_VALUES = ['login', 'refresh', 'login-user', 'refresh-user'];
-const USAGE = 'Usage: billing-capture.mjs (--from-copilot [--via <login|refresh>] | --plan <copilot_plan|clear> [--via <login-user|refresh-user>]) [--account <ref>] [--tenant <ref>]';
+const USAGE = 'Usage: billing-capture.mjs (--from-copilot [--via <login|refresh>] | --plan <copilot_plan|clear> [--github <host/login>] [--via <login-user|refresh-user>]) [--account <ref>] [--tenant <ref>]';
 
-// argv after --account and --tenant were stripped: { fromCopilot, plan (a copilot_* value or null), clear, via }.
+// argv after --account and --tenant were stripped: { fromCopilot, plan (a copilot_* value or null), clear, github, via }.
 export function parseArgs(argv) {
-  const out = { fromCopilot: false, plan: null, clear: false, via: null };
+  const out = { fromCopilot: false, plan: null, clear: false, github: null, via: null };
   let planGiven = false;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -32,6 +33,10 @@ export function parseArgs(argv) {
         out.plan = parseDeclaredPlan(value);
         if (out.plan == null) throw new UserError(`Unknown Copilot plan "${value}". Use one of: ${DECLARABLE_PLANS.join(', ')}, or clear.`);
       }
+    } else if (arg === '--github') {
+      const value = argv[++i];
+      if (value == null || value.startsWith('--')) throw new UserError('--github needs a GitHub account, like github.com/<login>.');
+      out.github = value.trim().toLowerCase();
     } else if (arg === '--via') {
       const value = argv[++i];
       if (VIA_VALUES.indexOf(value) === -1) throw new UserError(`--via needs one of: ${VIA_VALUES.join(', ')}.`);
@@ -40,13 +45,13 @@ export function parseArgs(argv) {
       throw new UserError(`Unknown argument "${arg}". ${USAGE}`);
     }
   }
-  if (out.fromCopilot === planGiven) throw new UserError(USAGE);
+  if (out.fromCopilot === planGiven || (out.github != null && !planGiven)) throw new UserError(USAGE);
   return out;
 }
 
 function sameObserved(a, b) {
   if (a == null || b == null) return a === b;
-  return a.key === b.key && a.plan === b.plan && a.rawPlan === b.rawPlan && a.rawSku === b.rawSku;
+  return a.plan === b.plan && a.rawPlan === b.rawPlan && a.rawSku === b.rawSku;
 }
 
 // The persisted part of a snapshot, without its live identity and auth.
@@ -68,18 +73,24 @@ export function reconcileBillingConfig({ now = new Date(), config = readBillingC
     const nowIso = now.toISOString();
     const next = storedOf(config);
 
-    const raw = identity.key != null ? readLocalPlanRaw(identity.key) : null;
-    if (raw != null) {
-      // An observed entry for a different key is replaced, never merged.
-      const observed = {
-        key: identity.key,
-        plan: normalizeCopilotPlan(raw.rawPlan, raw.rawSku),
-        rawPlan: raw.rawPlan,
-        rawSku: raw.rawSku,
-        capturedAt: nowIso,
-      };
-      if (!sameObserved(config.observed, observed)) next.observed = observed;
+    // The Copilot CLI identity and VS Code's Copilot Chat account sign in separately; each keeps its own observed plan.
+    const vscode = readVscodeSignedIn();
+    const keys = [identity.key];
+    if (vscode != null && vscode.key !== identity.key) keys.push(vscode.key);
+    const observed = { ...config.observed };
+    let observedChanged = false;
+    for (const key of keys) {
+      const raw = key != null ? readLocalPlanRaw(key) : null;
+      const plan = raw == null ? null : normalizeCopilotPlan(raw.rawPlan, raw.rawSku);
+      // A sku-only reading (VS Code) that names no plan is no reading, so it never replaces a runtime answer.
+      if (raw == null || (raw.rawPlan == null && plan === CopilotPlan.UNKNOWN)) continue;
+      const entry = { plan, rawPlan: raw.rawPlan, rawSku: raw.rawSku, capturedAt: nowIso };
+      if (!sameObserved(observed[key], entry)) {
+        observed[key] = entry;
+        observedChanged = true;
+      }
     }
+    if (observedChanged) next.observed = observed;
 
     const last = config.lastIdentity;
     const lastKey = last == null ? null : last.key;
@@ -120,9 +131,15 @@ export function describeBillingChanges(previous, next) {
   return lines;
 }
 
-// Declares (or, with 'clear', drops) the plan for the identity's slot. Throws UserError on an unknown value.
-export function declarePlan(value, { now = new Date(), config = readBillingConfig() } = {}) {
-  const key = declaredKeyFor(config.identity);
+// Declares (or, with 'clear', drops) the plan for the identity's slot, or for `github` when that is VS Code's Copilot Chat
+// account. Throws UserError on an unknown value or an account not signed in here.
+export function declarePlan(value, { now = new Date(), config = readBillingConfig(), github = null } = {}) {
+  let key = declaredKeyFor(config.identity);
+  if (github != null && github !== config.identity.key) {
+    const vscode = readVscodeSignedIn();
+    if (vscode == null || vscode.key !== github) throw new UserError(`${github} is not signed in to Copilot on this machine.`);
+    key = github;
+  }
   const declared = { ...config.declared };
   if (String(value).trim().toLowerCase() === 'clear') {
     delete declared[key];

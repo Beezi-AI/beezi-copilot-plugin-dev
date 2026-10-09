@@ -11,7 +11,7 @@
       "name": "beezi-dev",
       "source": "./plugins/beezi-dev",
       "description": "Reports GitHub Copilot session token and AI-credit analytics to Beezi, attributed to repo and branch, and adds the Beezi MCP tools. — dev environment build.",
-      "version": "0.7.0-dev.5703",
+      "version": "0.7.1-dev.5710",
       "author": {
         "name": "Beezi"
       },

@@ -5,7 +5,7 @@ import { createRouteContext, routeForDir, routeKeyForDir, rulesOf, rulesTableLin
 import { isLiveTrackingAllowed, readTrackingState } from '../lib/tracking.mjs';
 import { pendingAskNotice, pendingAskSummary } from '../lib/workspace-prompt.mjs';
 import { readBillingConfig } from '../lib/billing-config.mjs';
-import { billingStatus, planLabel } from '../lib/billing.mjs';
+import { billingStatus, vscodeBillingStatus, planLabel } from '../lib/billing.mjs';
 import { statuslineInstalled } from '../lib/statusline-install.mjs';
 import {
   buildStatusReport, crashMode, crashText, field, identityText, names, signInField, workspaceList,
@@ -127,14 +127,25 @@ const PLAN_SOURCE_TEXT = { declared: 'declared by you', observed: 'read from Cop
 
 // The Copilot plan block for the Account section, from the same resolution the reports use.
 function copilotBlock() {
-  const status = billingStatus({ config: readBillingConfig() });
+  const config = readBillingConfig();
+  const status = billingStatus({ config });
   const label = planLabel(status.plan);
-  return [
+  const lines = [
     'This machine',
     field('Copilot plan', label == null ? 'unknown — tell Beezi in /beezi-dev-settings refresh' : label),
     field('Plan source', PLAN_SOURCE_TEXT[status.planSource] || status.planSource),
     field('GitHub sign-in', identityText(status.identity)),
   ];
+  // VS Code's Copilot Chat signs in on its own; shown only when it is another account.
+  const vscode = vscodeBillingStatus({ config });
+  if (vscode != null) {
+    const vscodeLabel = planLabel(vscode.plan);
+    lines.push(field('VS Code login', vscode.key));
+    lines.push(field('VS Code plan', vscodeLabel == null
+      ? 'unknown — tell Beezi in /beezi-dev-settings refresh'
+      : `${vscodeLabel} (${PLAN_SOURCE_TEXT[vscode.planSource] || vscode.planSource})`));
+  }
+  return lines;
 }
 
 function currentDir() {

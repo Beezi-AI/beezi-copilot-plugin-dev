@@ -161,7 +161,7 @@ those still happen where `SessionStart` never fires. It writes its notes to
 | `<copilot home>/session-state/<id>/events.jsonl` | every event of a session (append-only lines `{type, id, parentId, timestamp, data}`) |
 | `<copilot home>/session-state/<id>/workspace.yaml` | the session name |
 | `<copilot home>/session-store.db` | per-call usage rows, opened read-only, only when `node:sqlite` exists (see Token modes) |
-| `<copilot home>/config.json` | the signed-in GitHub login and host (`loggedInUsers`) |
+| `<copilot home>/config.json` | the signed-in GitHub login and host (`loggedInUsers`); when it is missing or lists nobody, VS Code's Copilot Chat sign-in stands in (see VS Code Local sessions) |
 | `<copilot home>/settings.json` | read for `askUser`; written only by the status line install |
 
 `<copilot home>` is `COPILOT_HOME` when set and `~/.copilot` otherwise. Every location comes from
@@ -177,7 +177,7 @@ the Copilot home. The plugin reads them read-only from `Code` and `Code - Inside
 |---|---|
 | `<VS Code user>/workspaceStorage/<hash>/chatSessions/<id>.jsonl` | a session in a folder window; `workspace.json` beside it names the folder |
 | `<VS Code user>/globalStorage/emptyWindowChatSessions/<id>.jsonl` | a session in a window with no folder |
-| `<VS Code logs>/<launch>/window*/exthost/GitHub.copilot-chat/GitHub Copilot Chat.log` | the `Logged in as <login>` line, for the session's account |
+| `<VS Code logs>/<launch>/window*/exthost/GitHub.copilot-chat/GitHub Copilot Chat.log` | the `Logged in as <login>` line, for the session's account; in the newest launch, also the `copilot token sku: <sku>` line, for the plan |
 
 - **File format.** The first line is a full snapshot (`kind: 0`). Each later line patches it:
   `kind: 1` sets a path, and `kind: 2` appends to an array, or with `i`, truncates it to `i` and
@@ -196,7 +196,8 @@ the Copilot home. The plugin reads them read-only from `Code` and `Code - Inside
     with no model at all uploads nothing.
 - **Account.** It comes from the Copilot Chat log of the VS Code launch that covered the session,
   else from `state.vscdb`, but only when the session's own account label agrees. Otherwise the
-  session takes the account Copilot is signed in as now.
+  session takes the account VS Code's Copilot Chat is signed in as now (unless the label names someone
+  else), else the account Copilot is signed in as now.
 - **Capture.**
   - The watcher scans these folders whenever any plugin MCP server is running.
   - The plugin's hooks reach these sessions when VS Code runs them (`chat.useHooks`, trusted
@@ -246,10 +247,18 @@ the Copilot home. The plugin reads them read-only from `Code` and `Code - Inside
   `copilot_student`, `copilot_pro`, `copilot_pro_plus`, `copilot_max`, `copilot_business`,
   `copilot_enterprise` or `unknown`. `subscription_type` is `individual`, `organization` or
   `enterprise`. A plan the user has not declared is omitted, never sent as `unknown`.
-- **The plan is declared, not read.** This build has no local source for the Copilot plan
-  (`readLocalPlanRaw` in `lib/copilot-account.mjs` returns nothing), so `/beezi-login` and
-  `/beezi-settings` ask the user. A declared plan applies only to the GitHub account it was declared
-  for.
+- **Where the plan comes from.** `readLocalPlanRaw` in `lib/copilot-account.mjs` takes the Copilot
+  runtime's `copilot_plan` and `access_type_sku` when it has them, else the sku VS Code's Copilot Chat
+  logged for the same GitHub account. A sku alone names Free, Student, Business and Enterprise; Pro
+  and Pro+ need the runtime's plan, and a sku that names no plan is ignored. With no plan found, `/beezi-login` and
+  `/beezi-settings` ask the user. A declared plan wins over an observed one and applies only to the
+  GitHub account it was declared for.
+- **Two sign-ins.** The Copilot CLI and VS Code's Copilot Chat sign in separately, and a token
+  environment variable (`COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`) overrides only the CLI's.
+  `billing.json` keeps an observed and a declared plan per GitHub account, so a VS Code session bound
+  to its own account gets that account's plan whatever the CLI is signed in as. When VS Code's account
+  differs from the CLI's and has no plan, `/beezi-login` and `/beezi-settings refresh` ask for it
+  separately (`billing-capture.mjs --plan <plan> --github <host/login>`).
 - **The account** on a report is `account_uuid`, the lowercase GitHub identity `<host>/<login>`, up to
   64 characters. It is omitted when Copilot is signed in through a token environment variable, or
   has several signed-in users and no active one can be told. No email is sent.
@@ -306,7 +315,7 @@ comes from `lib/paths.mjs`:
 accounts.json                 # linked accounts and the default
 accounts/<key>/               # per account: credentials/, queue/, tracking.json, audit-ledger*.json, coverage*.json, account-sync.json, usage-pending.json
 state/                        # per-session state, markers and locks (swept after 14 days)
-billing.json                  # the declared Copilot plan and the last identity seen
+billing.json                  # observed and declared Copilot plans per GitHub account, and the last identity seen
 repo-map.json                 # directory-to-repository cache
 quota-copilot.json  usage-series.json   # monthly quota cache and usage series; written only when the quota probe is on
 update-check.json  plan-nudge.json  upgrade-notice.json  installation.json
