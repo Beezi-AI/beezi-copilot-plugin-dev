@@ -14,10 +14,12 @@ const LAUNCH_DIR = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/;
 const WINDOW_DIR = /^window\d+$/;
 // Local-time stamp, level, then the login; only the login survives the scan.
 const LOGIN_LINE = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\.(\d{3}) \[\w+\] (?:Logged in as|Got Copilot token for) ([A-Za-z0-9_-]{1,39})\s*$/;
+// The Copilot token's access_type_sku, logged right after the login it was fetched for.
+const SKU_LINE = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\.(\d{3}) \[\w+\] copilot token sku: ([a-z0-9_]{1,50})\s*$/;
 const USAGES_KEY = /^github-([A-Za-z0-9_-]{1,39})-usages$/;
 const CHUNK_BYTES = 1024 * 1024;
 
-// path → { size, mtimeMs, logins: [{ ms, login }] }; in-memory only, so a backfill scans each log once.
+// path → { size, mtimeMs, logins: [{ ms, login }], skus: [{ ms, login, sku }] }; in-memory only, so a backfill scans each log once.
 const scanned = new Map();
 
 function readDir(dir) {
@@ -36,17 +38,25 @@ function account(login, source) {
   return key == null ? null : { key, host, login, source };
 }
 
-// Login lines of one log, read in chunks; no other line outlives this call.
+// Login and sku lines of one log, read in chunks; no other line outlives this call. Each sku carries the login logged before it.
 function scanLog(file, stat) {
   const cached = scanned.get(file);
-  if (cached != null && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) return cached.logins;
+  if (cached != null && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) return cached;
   const logins = [];
+  const skus = [];
   const take = (line) => {
-    if (line.indexOf(' as ') === -1 && line.indexOf('token for ') === -1) return;
-    const m = LOGIN_LINE.exec(line.replace(/\r$/, ''));
-    if (m == null) return;
-    const ms = localMs(m[1], m[2], m[3], m[4], m[5], m[6], m[7]);
-    if (ms != null) logins.push({ ms, login: m[8] });
+    if (line.indexOf(' as ') === -1 && line.indexOf('token for ') === -1 && line.indexOf('token sku: ') === -1) return;
+    const clean = line.replace(/\r$/, '');
+    const m = LOGIN_LINE.exec(clean);
+    if (m != null) {
+      const ms = localMs(m[1], m[2], m[3], m[4], m[5], m[6], m[7]);
+      if (ms != null) logins.push({ ms, login: m[8] });
+      return;
+    }
+    const s = SKU_LINE.exec(clean);
+    if (s == null) return;
+    const ms = localMs(s[1], s[2], s[3], s[4], s[5], s[6], s[7]);
+    if (ms != null) skus.push({ ms, login: logins.length > 0 ? logins[logins.length - 1].login : null, sku: s[8] });
   };
   let fd = null;
   try {
@@ -62,34 +72,43 @@ function scanLog(file, stat) {
     }
     if (carry !== '') take(carry);
   } catch {
-    return [];
+    return { logins: [], skus: [] };
   } finally {
     if (fd != null) { try { fs.closeSync(fd); } catch { /* already closed */ } }
   }
-  scanned.set(file, { size: stat.size, mtimeMs: stat.mtimeMs, logins });
-  return logins;
+  const entry = { size: stat.size, mtimeMs: stat.mtimeMs, logins, skus };
+  scanned.set(file, entry);
+  return entry;
+}
+
+// Start time of a <logsDir>/<launch> folder name, or null when it is not one.
+function launchStartMs(name) {
+  const m = LAUNCH_DIR.exec(name);
+  return m == null ? null : localMs(m[1], m[2], m[3], m[4], m[5], m[6], 0);
+}
+
+// The Copilot Chat logs of one launch, one per window that has one.
+function launchLogs(launchDir) {
+  const logs = [];
+  for (const win of readDir(launchDir)) {
+    if (!WINDOW_DIR.test(win)) continue;
+    const file = vscodeCopilotChatLog(launchDir, win);
+    let stat;
+    try { stat = fs.statSync(file); } catch { continue; }
+    if (stat.isFile()) logs.push({ file, stat });
+  }
+  return logs;
 }
 
 // Launches whose span (folder start .. last Copilot Chat log write) contains atMs, with their chat logs.
 function coveringLaunches(logsDir, atMs) {
   const out = [];
   for (const name of readDir(logsDir)) {
-    const m = LAUNCH_DIR.exec(name);
-    if (m == null) continue;
-    const startMs = localMs(m[1], m[2], m[3], m[4], m[5], m[6], 0);
+    const startMs = launchStartMs(name);
     if (startMs == null || startMs > atMs) continue;
-    const launchDir = path.join(logsDir, name);
-    const logs = [];
+    const logs = launchLogs(path.join(logsDir, name));
     let endMs = -Infinity;
-    for (const win of readDir(launchDir)) {
-      if (!WINDOW_DIR.test(win)) continue;
-      const file = vscodeCopilotChatLog(launchDir, win);
-      let stat;
-      try { stat = fs.statSync(file); } catch { continue; }
-      if (!stat.isFile()) continue;
-      logs.push({ file, stat });
-      if (stat.mtimeMs > endMs) endMs = stat.mtimeMs;
-    }
+    for (const log of logs) if (log.stat.mtimeMs > endMs) endMs = log.stat.mtimeMs;
     if (logs.length > 0 && endMs >= atMs) out.push(logs);
   }
   return out;
@@ -100,12 +119,55 @@ function fromLogs(logsDir, atMs) {
   let best = null;
   for (const logs of coveringLaunches(logsDir, atMs)) {
     for (const log of logs) {
-      for (const hit of scanLog(log.file, log.stat)) {
+      for (const hit of scanLog(log.file, log.stat).logins) {
         if (hit.ms <= atMs && (best == null || hit.ms >= best.ms)) best = hit;
       }
     }
   }
   return best == null ? null : account(best.login, VscodeAccountSource.LOG);
+}
+
+// VS Code's current Copilot Chat account for a session neither its logs nor state.vscdb resolved, unless the session's
+// own account label names someone else. Sync. Never throws.
+export function currentVscodeAccount(session) {
+  const now = readVscodeSignedIn();
+  if (now == null) return null;
+  const label = session != null && typeof session.accountLabel === 'string' ? session.accountLabel.trim().toLowerCase() : '';
+  return label !== '' && label !== now.login.toLowerCase() ? null : now;
+}
+
+// The account Copilot Chat last signed in as, from the newest VS Code launch that wrote a Copilot Chat log, with the
+// token sku logged for that login: { key, host, login, rawSku } (rawSku null when none was logged). Sync. Never throws.
+export function readVscodeSignedIn() {
+  try {
+    const launches = [];
+    for (const install of vscodeInstalls()) {
+      for (const name of readDir(install.logsDir)) {
+        const startMs = launchStartMs(name);
+        if (startMs != null) launches.push({ dir: path.join(install.logsDir, name), startMs });
+      }
+    }
+    launches.sort((a, b) => b.startMs - a.startMs);
+    for (const launch of launches) {
+      const logs = launchLogs(launch.dir);
+      if (logs.length === 0) continue;
+      // The newest launch with Copilot Chat decides; an older one never stands in for a sign-out.
+      let who = null;
+      let sku = null;
+      for (const log of logs) {
+        const scan = scanLog(log.file, log.stat);
+        for (const hit of scan.logins) if (who == null || hit.ms >= who.ms) who = hit;
+        for (const hit of scan.skus) if (sku == null || hit.ms >= sku.ms) sku = hit;
+      }
+      const found = who == null ? null : account(who.login, VscodeAccountSource.LOG);
+      if (found == null) return null;
+      const own = sku != null && sku.login != null && sku.login.toLowerCase() === who.login.toLowerCase();
+      return { key: found.key, host: found.host, login: found.login, rawSku: own ? sku.sku : null };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 // The logins with a 'github-<login>-usages' key in state.vscdb, read-only; [] when unreadable.

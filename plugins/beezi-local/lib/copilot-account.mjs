@@ -2,6 +2,7 @@ import fs from 'fs';
 import { copilotConfigFile } from './copilot-paths.mjs';
 import { quotaCacheFile } from './paths.mjs';
 import { readJson } from './fs-store.mjs';
+import { readVscodeSignedIn } from './vscode-account.mjs';
 
 // Why the GitHub identity is or is not known. Downstream code branches on this, never re-derives it.
 export const IdentityStatus = Object.freeze({
@@ -72,6 +73,12 @@ function identity(status, host = null, login = null) {
   if (status === IdentityStatus.OK && key == null) return identity(IdentityStatus.UNREADABLE);
   // No numeric GitHub id: V-19 is open, and the key never uses it (R-07, D-1).
   return { status, host: status === IdentityStatus.OK ? host : null, login: status === IdentityStatus.OK ? login : null, id: null, key };
+}
+
+// No Copilot CLI account in config.json: VS Code's Copilot Chat sign-in names the account, else `status` stands.
+function vscodeIdentity(status) {
+  const vscode = readVscodeSignedIn();
+  return vscode != null ? identity(IdentityStatus.OK, vscode.host, vscode.login) : identity(status);
 }
 
 // Only named scalars leave each entry; the rest of config.json (tokens included) is dropped unread.
@@ -145,8 +152,8 @@ export function readCopilotIdentity({ env = process.env, readJsonImpl } = {}) {
         : identity(IdentityStatus.ENV_TOKEN);
     }
     const users = usersOf(read(copilotConfigFile(), null));
-    if (users == null) return identity(IdentityStatus.UNREADABLE);
-    if (users.length === 0) return identity(IdentityStatus.LOGGED_OUT);
+    if (users == null) return fs.existsSync(copilotConfigFile()) ? identity(IdentityStatus.UNREADABLE) : vscodeIdentity(IdentityStatus.UNREADABLE);
+    if (users.length === 0) return vscodeIdentity(IdentityStatus.LOGGED_OUT);
     let chosen = null;
     if (users.length === 1) chosen = users[0];
     else {
@@ -165,10 +172,14 @@ export function readCopilotIdentity({ env = process.env, readJsonImpl } = {}) {
   }
 }
 
-// The raw plan the Copilot runtime reported for this identity key ({ rawPlan, rawSku }), or null.
+// The raw plan for this identity key ({ rawPlan, rawSku }): the Copilot runtime's answer, else the token sku VS Code's
+// Copilot Chat logged for it (rawPlan null); or null.
 export function readLocalPlanRaw(key) {
+  if (key == null) return null;
   const runtime = readRuntimeAuth();
-  if (runtime == null || key == null || runtime.key !== key) return null;
-  if (runtime.rawPlan == null && runtime.rawSku == null) return null;
-  return { rawPlan: runtime.rawPlan, rawSku: runtime.rawSku };
+  if (runtime != null && runtime.key === key && (runtime.rawPlan != null || runtime.rawSku != null)) {
+    return { rawPlan: runtime.rawPlan, rawSku: runtime.rawSku };
+  }
+  const vscode = readVscodeSignedIn();
+  return vscode != null && vscode.key === key && vscode.rawSku != null ? { rawPlan: null, rawSku: vscode.rawSku } : null;
 }

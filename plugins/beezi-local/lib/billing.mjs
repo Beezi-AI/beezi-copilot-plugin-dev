@@ -1,5 +1,6 @@
 import { readBillingConfig, configForAccount } from './billing-config.mjs';
 import { IdentityStatus } from './copilot-account.mjs';
+import { readVscodeSignedIn } from './vscode-account.mjs';
 
 // The billing vocabulary shared with the Beezi API. Defined once so a stray literal typo in a
 // comparison can't silently misclassify.
@@ -75,17 +76,22 @@ export function subscriptionTypeOf(plan) {
   }
 }
 
-// (copilot_plan, access_type_sku) from the runtime's account.getCurrentAuth, first match wins.
-// Observed: business + copilot_for_business_seat_quota. Anything unmatched is 'unknown', never a priced guess.
+// (copilot_plan, access_type_sku) from the runtime's account.getCurrentAuth, or (null, sku) from VS Code's Copilot Chat log;
+// first match wins. Observed: business + copilot_for_business_seat_quota. The edu/max plans and the business/enterprise sku
+// families are VS Code 1.140's own. Anything unmatched is 'unknown', never a priced guess.
 const PLAN_RULES = Object.freeze([
   { plan: /^enterprise$/, sku: null, to: CopilotPlan.ENTERPRISE },
   { plan: /^business$/, sku: null, to: CopilotPlan.BUSINESS },
   { plan: null, sku: /^free_limited/, to: CopilotPlan.FREE },
   { plan: null, sku: /educational|student/, to: CopilotPlan.STUDENT },
+  { plan: /^individual_edu$/, sku: null, to: CopilotPlan.STUDENT },
   { plan: /^individual_pro$/, sku: null, to: CopilotPlan.PRO_PLUS },
   { plan: null, sku: /pro_?plus/, to: CopilotPlan.PRO_PLUS },
+  { plan: /^individual_max$/, sku: null, to: CopilotPlan.MAX },
   { plan: null, sku: /(^|_)max(_|$)/, to: CopilotPlan.MAX },
   { plan: /^individual$/, sku: /subscriber_quota$|(^|_)pro(_|$)/, to: CopilotPlan.PRO },
+  { plan: null, sku: /^copilot_enterprise_/, to: CopilotPlan.ENTERPRISE },
+  { plan: null, sku: /^copilot_for_business_/, to: CopilotPlan.BUSINESS },
 ]);
 
 export function normalizeCopilotPlan(rawPlan, rawSku) {
@@ -114,12 +120,26 @@ export function resolvePlan(config) {
     const plan = parseDeclaredPlan(declared[slot].plan);
     if (plan != null) return { plan, source: PlanSource.DECLARED };
   }
-  const observed = config.observed;
-  if (observed != null && identity.status === IdentityStatus.OK && identity.key != null && observed.key === identity.key) {
-    const plan = parseDeclaredPlan(observed.plan);
+  const observed = config.observed != null && typeof config.observed === 'object' ? config.observed : {};
+  if (identity.status === IdentityStatus.OK && identity.key != null && Object.prototype.hasOwnProperty.call(observed, identity.key) && observed[identity.key] != null) {
+    const plan = parseDeclaredPlan(observed[identity.key].plan);
     if (plan != null) return { plan, source: PlanSource.OBSERVED };
   }
   return none;
+}
+
+// VS Code's Copilot Chat account and its own plan, when it is not the Copilot CLI identity: { key, login, plan, planSource },
+// or null. Reads VS Code's log, so it serves the views and the login/refresh questions, never a checkpoint.
+export function vscodeBillingStatus({ config } = {}) {
+  try {
+    const snapshot = config == null ? readBillingConfig() : config;
+    const vscode = readVscodeSignedIn();
+    if (vscode == null || (snapshot.identity != null && snapshot.identity.key === vscode.key)) return null;
+    const resolved = resolvePlan(configForAccount(snapshot, vscode.key));
+    return { key: vscode.key, login: vscode.login, plan: resolved.plan, planSource: resolved.source };
+  } catch {
+    return null;
+  }
 }
 
 function resolveAll(config) {

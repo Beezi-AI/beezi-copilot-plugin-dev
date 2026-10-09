@@ -13,7 +13,7 @@ import { acquireSessionLock, isUsableSessionId, loadSessionState, saveSessionSta
 import { projectInstructions } from './project-instructions.mjs';
 import { establishStart as _establishStart } from './session-coverage.mjs';
 import { findVscodeSessionFile, readVscodeSession, hasVscodeActivity } from './vscode-chat-session.mjs';
-import { resolveVscodeAccount } from './vscode-account.mjs';
+import { resolveVscodeAccount, currentVscodeAccount } from './vscode-account.mjs';
 import { planDelivery, flushPlans, localRemote, UNKNOWN_REMOTE, clamp, BRANCH_MAX, detectTimezone } from './checkpoint.mjs';
 
 // VS Code Local-agent sessions through the same recipients, queue and flush as the Copilot CLI checkpoint.
@@ -200,7 +200,7 @@ export async function runVscodeCheckpoint(input, deps = {}, options = {}) {
       const state = live ? loaded.vscode : null;
 
       // One account per session: the saved binding, else the Copilot Chat log or state.vscdb answer, saved once by a live run.
-      // Unresolved falls back to the account Copilot is signed in as now.
+      // Unresolved falls back to the account VS Code's Copilot Chat is signed in as now, else the one Copilot is signed in as now.
       let accountKey = loaded.accountKey;
       if (accountKey == null) {
         const found = await resolveVscodeAccount(session);
@@ -208,6 +208,10 @@ export async function runVscodeCheckpoint(input, deps = {}, options = {}) {
           accountKey = found.key;
           if (live) saveSessionState(sessionId, { accountKey: found.key, accountSource: found.source });
         }
+      }
+      if (accountKey == null) {
+        const current = currentVscodeAccount(session);
+        if (current != null) accountKey = current.key;
       }
       let billingFields = { billing_source: BillingSource.UNKNOWN };
       let identity = {};

@@ -222,9 +222,12 @@ makes the Beezi tools follow the new default.
 
 Use the default account unless the user named another; for another, add `--account <key>` to both
 commands. Run EXACTLY `node "<plugin-root>/scripts/billing-capture.mjs" --from-copilot --via refresh`
-and write its first line and any change notices verbatim; the `key=value` machine lines after them
-(`source=`, `plan=`, `plan-source=`, `identity=`) are for you only and never shown. Unless the machine
-line is `plan-source=none`, stop. Otherwise ask "Which
+and write its first lines (a second `✓ Beezi billing for VS Code …` line appears when VS Code is signed
+in to another GitHub account) and any change notices verbatim; the `key=value` machine lines after them
+(`source=`, `plan=`, `plan-source=`, `identity=`, and any `vscode-…=` lines) are for you only and never
+shown. Unless a machine line is `plan-source=none` or `vscode-plan-source=none`, stop.
+
+Only when `plan-source=none`: ask "Which
 GitHub Copilot plan pays for your Copilot use on this machine?" with "Copilot Free", "Copilot Student",
 "Copilot Pro", "Copilot Pro+", "Copilot Max", "Copilot Business — a seat from your organization",
 "Copilot Enterprise — a seat from your enterprise", "I don't know". The value is `copilot_free`,
@@ -233,6 +236,14 @@ GitHub Copilot plan pays for your Copilot use on this machine?" with "Copilot Fr
 `node "<plugin-root>/scripts/billing-capture.mjs" --plan <value> --via refresh-user` and write its
 first line and any change notices verbatim (never the machine lines). "I don't know", a dismissal or
 any other answer runs nothing; say the plan stays unknown.
+
+Then, only when `vscode-plan-source=none`: ask "VS Code's Copilot is signed in as <vscode-login>, a
+different GitHub account. Which Copilot plan does <vscode-login> have?", where `<vscode-login>` is the
+value of the `vscode-login=` machine line, with the same choices and values. Run EXACTLY ONCE, with
+`<vscode-identity>` the value of the `vscode-identity=` machine line,
+`node "<plugin-root>/scripts/billing-capture.mjs" --plan <value> --github <vscode-identity> --via refresh-user`
+and write its first line verbatim. "I don't know", a dismissal or any other answer runs nothing; say
+that account's plan stays unknown.
 
 ## Crash reports & status line
 

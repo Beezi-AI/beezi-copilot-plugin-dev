@@ -12,18 +12,28 @@ function str(value) {
   return typeof value === 'string' && value !== '' ? value : null;
 }
 
+function observedEntry(entry) {
+  return isPlain(entry) && str(entry.plan) != null
+    ? { plan: entry.plan, rawPlan: str(entry.rawPlan), rawSku: str(entry.rawSku), capturedAt: str(entry.capturedAt) }
+    : null;
+}
+
+// One observed plan per GitHub account, like `declared`; a pre-0.6.2 file holds a single `{ key, plan, … }`.
+function normalizeObserved(raw) {
+  const observed = {};
+  if (!isPlain(raw)) return observed;
+  const legacy = str(raw.key) != null ? { [raw.key]: raw } : raw;
+  for (const key of Object.keys(legacy)) {
+    const entry = observedEntry(legacy[key]);
+    if (entry != null) observed[key] = entry;
+  }
+  return observed;
+}
+
 // Keeps only the named fields of billing.json: the file is data, never an identity or a plan source by itself.
 function normalizeStored(raw) {
   const stored = isPlain(raw) ? raw : {};
-  const observed = isPlain(stored.observed) && str(stored.observed.key) != null && str(stored.observed.plan) != null
-    ? {
-      key: stored.observed.key,
-      plan: stored.observed.plan,
-      rawPlan: str(stored.observed.rawPlan),
-      rawSku: str(stored.observed.rawSku),
-      capturedAt: str(stored.observed.capturedAt),
-    }
-    : null;
+  const observed = normalizeObserved(stored.observed);
   const declared = {};
   if (isPlain(stored.declared)) {
     for (const key of Object.keys(stored.declared)) {
