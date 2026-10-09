@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "beezi-local",
-  "version": "0.6.1-local.5680",
+  "version": "0.7.0-local.5703",
   "description": "Reports GitHub Copilot session token and AI-credit analytics to Beezi, attributed to repo and branch, and adds the Beezi MCP tools. — local environment build.",
   "author": {
     "name": "Beezi"

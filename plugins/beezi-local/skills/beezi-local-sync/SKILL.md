@@ -34,7 +34,63 @@ is that account's key from `node "<plugin-root>/scripts/accounts.mjs"` (for you 
 Step 0 — run EXACTLY `node "<plugin-root>/scripts/preflight.mjs" --for sync`. If its first line
 starts with `✗`, show it verbatim and STOP.
 
-Step 1 — repos and folders with no rule. Run EXACTLY (add `--account <key>` when the user named an
+Step 1 — new workspaces, then repos and folders with no rule. In `mode=argument-only`, this step's
+questions are skipped (as for the rest of Step 1).
+
+First, new workspaces. Run EXACTLY (for you only; add `--account <key>` when the user named an
+account):
+
+`node "<plugin-root>/scripts/workspace.mjs" joined`
+
+Lines:
+- `<email>: you joined <names> — <N> repos or folders to review account=<key> new=<ids>` starts the
+  block;
+- `W. <workspace> account=<key> tenant=<id> new=<yes|no> role=<role>` is one per workspace, and
+  `new=yes` is one just joined;
+- `J<i>. <short> (<label>), <k> sessions, now: <where> account=<key> kind=<repo|folder|outside> match=<…> now=<ids|none|pending>`
+  is one repo or folder, where `<where>` is where it sends today: workspace names, `not tracked` or
+  `no rule yet`. `J<i>. outside a project, …` is sessions in the home folder, `/` or a temp folder;
+- `J<i>-command=<command>` comes right after its `J` line and ends in a literal `<tenants>`;
+- `add-all-command=<command>`;
+- `done-command=<command>`;
+- `joined=<total>` is last.
+
+`joined=0` → go to "Then, repos and folders with no rule".
+
+Per account with `J` lines (with several accounts, end each question with " (<email>)"):
+
+More than 4 `J` lines → first ask "You joined <names>. Where should analytics for these <N> repos and
+folders go?" (`<N>` = that account's number of `J` lines) with:
+- "Add <names> to all <N> — repos you don't track, and ones with no rule yet, stay as they are";
+- "Choose per repo — one question per repo or folder";
+- "Leave them as they are — nothing changes, and you're not asked about <names> again".
+
+"Add … to all" → run the `add-all-command=` text EXACTLY ONCE. "Choose per repo" → the per-repo
+questions. "Leave them as they are" → run the `done-command=` text EXACTLY ONCE. No answer → nothing;
+the next /beezi-local-sync asks again.
+
+The per-repo question (per `J` line, numbered `(i of N)` across that account's `J` lines, `N` = their
+number; several allowed). This question counter restarts for each account; the printed `J` numbers are
+global across accounts. Preserve each printed `J` number to match its command; never use the question
+counter to look up a `J<i>-command`. `<where>` is the text after `now: ` up to ` account=`.
+- For `kind=repo`: "(i of N) Now: <where>. Where should analytics for <short> go?", ending with
+  "Don't track this repo".
+- For `kind=folder`: "(i of N) Now: <where>. Where should analytics for <label> (and everything inside
+  it) go?", ending with "Don't track this folder".
+- For `kind=outside`: "(i of N) Now: <where>. Where should analytics for sessions outside a project
+  folder go?", ending with "Don't track these".
+
+Choices: one per `W.` line (name — role, or "Beezi workspace"; add ", new" for `new=yes`), then that
+last choice.
+
+For each answered `J` line, run its `J<i>-command=` text EXACTLY ONCE, changing only the final
+`<tenants>`: the chosen `tenant=` values joined by commas inside one pair of single quotes, like
+`'<id>,<id>'`, or `none` when the last choice was picked (it wins). After the last `J` question has
+been answered (not skipped or dismissed), run the `done-command=` text EXACTLY ONCE; otherwise run no
+`done-command`, and the next login or sync asks again. Never rebuild a command or re-quote its path.
+Write each command's first line verbatim.
+
+Then, repos and folders with no rule. Run EXACTLY (add `--account <key>` when the user named an
 account): `node "<plugin-root>/scripts/workspace.mjs" routes`. Its output is for you only, except the
 one line named below. For each account in several workspaces set to "Ask me", it prints a block:
 `<email>: <N repos or folders have | 1 repo or folder has> past sessions with no rule (<M> sessions) account=<key>`; `W.`

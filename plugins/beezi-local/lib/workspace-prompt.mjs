@@ -2,7 +2,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import {
   isMultiTenant,
+  joinTenantNames,
   listSessionWorkspaces,
+  newTenantsOf,
   readSessionWorkspace,
   resolveTargets,
   roleLabel,
@@ -219,6 +221,31 @@ export async function buildTargetsNotice(input, deps = {}) {
   return {
     context: context.length === 0 ? null : context.join('\n'),
     notTracked: notTracked.length === 0 ? null : notTracked.join('\n'),
+  };
+}
+
+// SessionStart: the line announcing workspaces joined since the last notice here, and how to mark them announced once relayed; null when none.
+export async function buildJoinedNotice() {
+  const accounts = await import('./accounts.mjs');
+  const rows = (await accounts.listAccounts()).filter((a) => a.status === accounts.AccountStatus.LINKED);
+  const lines = [];
+  const marks = [];
+  for (const row of rows) {
+    const announced = Array.isArray(row.joinNoticedTenantIds) ? row.joinNoticedTenantIds : [];
+    const ids = newTenantsOf(row).filter((id) => announced.indexOf(id) === -1);
+    if (ids.length === 0) continue;
+    const prefix = rows.length > 1 ? `Beezi (${row.email ? row.email : row.key})` : 'Beezi';
+    lines.push(`${prefix}: you joined ${joinTenantNames(row, ids)}. Run /beezi-local-sync to choose which repos send analytics there.`);
+    marks.push({ key: row.key, ids });
+  }
+  if (lines.length === 0) return null;
+  return {
+    text: lines.join(' '),
+    mark: async () => {
+      for (const m of marks) {
+        try { await accounts.markJoinNoticed(m.key, m.ids); } catch { /* announced again next session */ }
+      }
+    },
   };
 }
 
