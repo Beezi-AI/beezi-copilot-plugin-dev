@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { stateDir } from './paths.mjs';
 import { readJson, writeJsonSecure, isWinTransient } from './fs-store.mjs';
+import { MAIN_CALL_KEY } from './cold-prefix.mjs';
 
 export const SESSION_STATE_VERSION = 1;
 // A killed hook holds the session lock for at most this long (R-01).
@@ -19,6 +20,8 @@ const ACCOUNT_SOURCES = ['log', 'transcript', 'vscode-log', 'vscode-state'];
 const ACCOUNT_KEY_MAX = 64;
 const VSCODE_REQUEST_KEY_MAX = 200;
 const VSCODE_REPORTED_MAX = 10000;
+// Agents whose previous call is remembered for the cold-prefix counters.
+const MAX_LAST_CALLS = 50;
 
 // R-17: the only session-id validator. The character class already excludes '/', '\' and NUL; '..' is refused explicitly.
 export function isUsableSessionId(id) {
@@ -63,6 +66,7 @@ function defaults(sessionId) {
     pendingErrors: [],
     timelineHash: null,
     subagents: {},
+    lastCalls: {},
     accountKey: null,
     accountSource: null,
     // VS Code Local-agent progress, never read by the Copilot CLI path: see coerceVscode.
@@ -86,6 +90,19 @@ function coerceVscode(v) {
     lastReport: isPlain(v.lastReport) ? v.lastReport : null,
     sessionName: strOrNull(v.sessionName),
   };
+}
+
+// { [agentKey]: { at, model } }, keeping the most recent agents; anything malformed is dropped.
+function coerceLastCalls(v) {
+  if (!isPlain(v)) return {};
+  const keys = Object.keys(v).filter((k) => isPlain(v[k]) && typeof v[k].model === 'string' && v[k].model !== ''
+    && (v[k].at == null || (typeof v[k].at === 'number' && isFinite(v[k].at))));
+  keys.sort((a, b) => (v[b].at == null ? 0 : v[b].at) - (v[a].at == null ? 0 : v[a].at));
+  const out = {};
+  // The main stream's entry is never evicted by the cap.
+  const kept = keys.filter((k) => k === MAIN_CALL_KEY).concat(keys.filter((k) => k !== MAIN_CALL_KEY)).slice(0, MAX_LAST_CALLS);
+  for (const k of kept) out[k] = { at: v[k].at == null ? null : v[k].at, model: v[k].model };
+  return out;
 }
 
 function isInterval(v) {
@@ -125,6 +142,7 @@ function coerce(sessionId, parsed) {
     : [];
   state.timelineHash = strOrNull(parsed.timelineHash);
   state.subagents = isPlain(parsed.subagents) ? parsed.subagents : {};
+  state.lastCalls = coerceLastCalls(parsed.lastCalls);
   // The session's bound GitHub account '<host>/<login>'; both fields or neither.
   const key = strOrNull(parsed.accountKey);
   const bound = key != null && key.length <= ACCOUNT_KEY_MAX && key.indexOf('/') > 0 && ACCOUNT_SOURCES.indexOf(parsed.accountSource) !== -1;

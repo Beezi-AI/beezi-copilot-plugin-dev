@@ -117,11 +117,62 @@ Yes → run EXACTLY `node "<plugin-root>/scripts/accounts.mjs" use <key>` and wr
 No → say the default is unchanged and `/beezi-staging-settings account` switches it. Session tracking goes to
 every linked account either way.
 
-Step 5a — repos and folders with no rule. Run EXACTLY (for you only, except the line named below):
+Step 5a — new workspaces, then repos and folders with no rule. In `mode=argument-only`, skip the
+new-workspace questions and run nothing for them.
+
+First, new workspaces. Run EXACTLY (for you only):
+
+`node "<plugin-root>/scripts/workspace.mjs" joined --account <key>`
+
+Lines:
+- `<email>: you joined <names> — <N> repos or folders to review account=<key> new=<ids>` starts the
+  block;
+- `W. <workspace> account=<key> tenant=<id> new=<yes|no> role=<role>` is one per workspace, and
+  `new=yes` is one just joined;
+- `J<i>. <short> (<label>), <k> sessions, now: <where> account=<key> kind=<repo|folder|outside> match=<…> now=<ids|none|pending>`
+  is one repo or folder, where `<where>` is where it sends today: workspace names, `not tracked` or
+  `no rule yet`. `J<i>. outside a project, …` is sessions in the home folder, `/` or a temp folder;
+- `J<i>-command=<command>` comes right after its `J` line and ends in a literal `<tenants>`;
+- `add-all-command=<command>`;
+- `done-command=<command>`;
+- `joined=<total>` is last.
+
+`joined=0` → go to "Then, repos and folders with no rule".
+
+More than 4 `J` lines → first ask "You joined <names>. Where should analytics for these <N> repos and
+folders go?" with:
+- "Add <names> to all <N> — repos you don't track, and ones with no rule yet, stay as they are";
+- "Choose per repo — one question per repo or folder";
+- "Leave them as they are — nothing changes, and you're not asked about <names> again".
+
+"Add … to all" → run the `add-all-command=` text EXACTLY ONCE. "Choose per repo" → the per-repo
+questions. "Leave them as they are" → run the `done-command=` text EXACTLY ONCE. No answer → nothing;
+the next login or /beezi-staging-sync asks again.
+
+The per-repo question (per `J` line, numbered `(i of N)`; several allowed). `<where>` is the text after
+`now: ` up to ` account=`.
+- For `kind=repo`: "(i of N) Now: <where>. Where should analytics for <short> go?", ending with
+  "Don't track this repo".
+- For `kind=folder`: "(i of N) Now: <where>. Where should analytics for <label> (and everything inside
+  it) go?", ending with "Don't track this folder".
+- For `kind=outside`: "(i of N) Now: <where>. Where should analytics for sessions outside a project
+  folder go?", ending with "Don't track these".
+
+Choices: one per `W.` line (name — role, or "Beezi workspace"; add ", new" for `new=yes`), then that
+last choice.
+
+For each answered `J` line, run its `J<i>-command=` text EXACTLY ONCE, changing only the final
+`<tenants>`: the chosen `tenant=` values joined by commas inside one pair of single quotes, like
+`'<id>,<id>'`, or `none` when the last choice was picked (it wins). After the last `J` question has
+been answered (not skipped or dismissed), run the `done-command=` text EXACTLY ONCE; otherwise run no
+`done-command`, and the next login or sync asks again. Never rebuild a command or re-quote its path.
+Write each command's first line verbatim.
+
+Then, repos and folders with no rule. Run EXACTLY (for you only, except the line named below):
 
 `node "<plugin-root>/scripts/workspace.mjs" routes --account <key>`
 
-Lines: `W.` lines as above; `P<i>. <short> (<label>), <k> sessions account=<key> kind=<repo|folder|outside> match=<…>`
+Lines: `W.` lines as in Step 1w; `P<i>. <short> (<label>), <k> sessions account=<key> kind=<repo|folder|outside> match=<…>`
 (one repo or folder; `P<i>. outside a project, …` is every past session in the home folder, `/` or a
 temp folder); `P<i>-command=<command>` right after its `P` line, ending in a literal `<tenants>`;
 `all-command=<command>`; `<n> other past sessions have no recorded folder and are not sent.` (for one
@@ -156,6 +207,11 @@ delivered, running /beezi-staging-login again resumes. If it says the one-time i
 final: do not retry, do not look for a way around it, and never add or suggest `--force`, `--since` or
 `--dry-run`. Only when it reports the import finalized, tell the user to run /beezi-staging-login on their other
 machines before those finalize too.
+
+- `… to this workspace you joined` / `this workspace already has this machine's history` / `Some history
+  did not reach this workspace this time…` — the upload for a workspace joined after this machine was
+  linked; it resumes from what that workspace already has, like /beezi-staging-sync. Relay it; when history
+  did not arrive, offer /beezi-staging-sync.
 
 If the Beezi tools are still missing afterwards, they appear within about 15 seconds; if not, run
 /restart.

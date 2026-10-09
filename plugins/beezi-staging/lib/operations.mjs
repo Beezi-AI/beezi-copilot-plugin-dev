@@ -1,4 +1,5 @@
 // Buckets each Copilot tool call in a segment into seven categories and estimates its result size (result bytes / 4).
+import { EVENT_TYPES } from './copilot-events.mjs';
 
 // Claude tool name per Copilot runtime name (hooks reference, PascalCase table) plus shell-session tools.
 const CLAUDE_NAME = {
@@ -129,7 +130,7 @@ export function completionsById(events) {
   const map = new Map();
   for (const e of Array.isArray(events) ? events : []) {
     const d = dataOf(e);
-    if (e.type === 'tool.execution_complete' && typeof d.toolCallId === 'string') map.set(d.toolCallId, e);
+    if (e.type === EVENT_TYPES.TOOL_COMPLETE && typeof d.toolCallId === 'string') map.set(d.toolCallId, e);
   }
   return map;
 }
@@ -145,13 +146,14 @@ export function emptyOperations() {
 
 export function collectOperations(events, segment, ctx) {
   const seg = (Array.isArray(events) ? events : []).filter((e) => inSegment(e, segment));
-  const completeById = completionsById(ctx != null && Array.isArray(ctx.allEvents) ? ctx.allEvents : seg);
+  // ctx.completeById is the run-wide index; a bare call indexes the whole file itself.
+  const completeById = ctx != null && ctx.completeById instanceof Map ? ctx.completeById : completionsById(ctx != null && Array.isArray(ctx.allEvents) ? ctx.allEvents : seg);
   const totals = emptyOperations();
   const plugins = totals.plugins;
   const skills = seg.filter(isSkillInvocation);
 
   for (const e of seg) {
-    if (e.type !== 'tool.execution_start') continue;
+    if (e.type !== EVENT_TYPES.TOOL_START) continue;
     const d = dataOf(e);
     const complete = completeById.get(d.toolCallId);
     if (complete != null && dataOf(complete).isUserRequested === true) continue;

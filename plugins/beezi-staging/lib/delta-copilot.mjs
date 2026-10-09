@@ -1,6 +1,8 @@
 import { EVENT_TYPES, findShutdowns } from './copilot-events.mjs';
 import { pathSignalOf } from './repo-timeline.mjs';
 import { buildActiveIntervals, totalMs } from './active-time.mjs';
+import { isAutoAt, isAutoName } from './auto-selection.mjs';
+import { observeCall, emptyCold, addCold, callStartMs } from './cold-prefix.mjs';
 
 // Gaps longer than this between two activity events count as idle, not active time.
 export const IDLE_GAP_SEC = 300;
@@ -60,7 +62,7 @@ function contextOf(ev) {
 // A model name, or null for the router placeholder "auto", which never bills under its own name.
 function modelName(v) {
   const s = str(v);
-  return s != null && s.trim().toLowerCase() === 'auto' ? null : s;
+  return s != null && isAutoName(s) ? null : s;
 }
 
 // The model an event names, so a zero-usage segment can still name the active one.
@@ -95,6 +97,7 @@ function newWork(sessionId, agentId, repoRoot, branch, line) {
     sessionNano: 0,
     context: null,
     contextPeakHint: 0,
+    cold: null,
   };
 }
 
@@ -259,6 +262,16 @@ function tally(models, model, effort, t) {
     b.token_cache_creation += t.cacheWrite;
     b.requests += t.requests;
   }
+  if (t.reasoning != null) {
+    for (const b of [m, m.by_effort[effort]]) b.token_reasoning_output = (b.token_reasoning_output == null ? 0 : b.token_reasoning_output) + t.reasoning;
+  }
+  // Auto routing slice: counted only for calls the plugin could judge (per_call rows), so absent means unmeasured.
+  if (t.auto != null) {
+    for (const b of [m, m.by_effort[effort]]) {
+      b.auto_requests = (b.auto_requests == null ? 0 : b.auto_requests) + t.auto.requests;
+      if (t.auto.nano != null) b.auto_ai_credits_nano = (b.auto_ai_credits_nano == null ? 0 : b.auto_ai_credits_nano) + t.auto.nano;
+    }
+  }
   if (t.nano != null) m.ai_credits_nano = (m.ai_credits_nano == null ? 0 : m.ai_credits_nano) + t.nano;
   if (t.premium != null) m.premium_requests = (m.premium_requests == null ? 0 : m.premium_requests) + t.premium;
 }
@@ -277,7 +290,14 @@ function firstStamp(work) {
 // Per-call join (V-09 default: row timestamp). Consumes rows as a contiguous prefix bounded to the window; may push empty subagent works.
 export function attributeRows(works, rows, allEvents, opts = {}) {
   const horizonMs = opts.horizonMs == null ? Infinity : opts.horizonMs;
-  const { finalize = false, allowLate = true, windowFromLine = 0, windowToLine = 0, floorMs = -Infinity } = opts;
+  const { finalize = false, allowLate = true, windowFromLine = 0, windowToLine = 0, floorMs = -Infinity, autoPoints = null } = opts;
+  // Copy: a failed run must not leave the saved state half-advanced.
+  const lastCalls = { ...(isPlain(opts.lastCalls) ? opts.lastCalls : {}) };
+  // The cold-prefix counters are a side measure: a failure there is reported, never allowed to lose the row's tokens.
+  let coldFailed = false;
+  const observe = (...args) => {
+    try { return observeCall(lastCalls, ...args); } catch { coldFailed = true; return { switched: false, cold: false, idleCold: false }; }
+  };
   const streams = new Map();
   let windowStart = Infinity;
   for (const w of works) {
@@ -292,9 +312,12 @@ export function attributeRows(works, rows, allEvents, opts = {}) {
   for (const row of Array.isArray(rows) ? rows : []) {
     const key = row.agentId == null ? '' : row.agentId;
     const t = row.at == null ? NaN : Date.parse(row.at);
+    const u = normalize(row.inputTokens, row.outputTokens, row.cacheReadTokens, row.cacheWriteTokens);
+    const model = modelName(row.model) || 'unknown';
     // A row created before the establishing window is already held by the server: consumed, never billed.
     if (t < floorMs) {
       lastRowId = row.rowId;
+      observe(key === '' ? null : key, t, model, u);
       continue;
     }
     // A row past the horizon may belong to lines not yet written: it and everything after wait.
@@ -313,6 +336,8 @@ export function attributeRows(works, rows, allEvents, opts = {}) {
     }
     if (list.length === 0) break;
     lastRowId = row.rowId;
+    // Every consumed row advances the agent's previous call, including late rows an audit drops.
+    const call = observe(key === '' ? null : key, t, model, u, row.durationMs);
     let target = null;
     if (t < windowStart) {
       // Late: it maps before this window. Live runs bill it to the stream's first work; an audit drops it.
@@ -322,17 +347,29 @@ export function attributeRows(works, rows, allEvents, opts = {}) {
       for (const w of list) if (firstStamp(w) <= t) target = w;
       if (target == null) target = list[0];
     }
-    const u = normalize(row.inputTokens, row.outputTokens, row.cacheReadTokens, row.cacheWriteTokens);
     // Only user-initiated calls bill their request_multiplier; sub-agent and other initiators cost 0.
     const premium = row.initiator == null || row.requestMultiplier == null ? null : (row.initiator === 'user' ? row.requestMultiplier : 0);
-    const model = modelName(row.model) || 'unknown';
-    tally(target.models, model, effortKey(row.reasoningEffort), { ...u, requests: 1, nano: isReported(row.nanoAiu) ? n(row.nanoAiu) : null, premium });
+    const nano = isReported(row.nanoAiu) ? n(row.nanoAiu) : null;
+    // Auto is judged on the main stream only; a subagent's call counts as measured and not Auto.
+    const isAuto = key === '' && autoPoints != null && isAutoAt(autoPoints, callStartMs(t, row.durationMs));
+    tally(target.models, model, effortKey(row.reasoningEffort), {
+      ...u,
+      requests: 1,
+      nano,
+      premium,
+      reasoning: isReported(row.reasoningTokens) ? n(row.reasoningTokens) : null,
+      auto: autoPoints == null ? null : { requests: isAuto ? 1 : 0, nano: isAuto && nano != null ? nano : null },
+    });
+    try {
+      if (target.cold == null) target.cold = emptyCold();
+      addCold(target.cold, call, nano);
+    } catch { coldFailed = true; }
     if (key === '') {
       const peak = target.context == null ? 0 : target.context.peak;
       target.context = { peak: Math.max(peak, u.prompt), final: u.prompt, model };
     }
   }
-  return { lastRowId };
+  return { lastRowId, lastCalls, coldFailed };
 }
 
 function metricOf(m) {
@@ -348,6 +385,8 @@ function metricOf(m) {
     hasCost: isReported(r.cost),
     nano: isPlain(m) ? n(m.totalNanoAiu) : 0,
     hasNano: isPlain(m) && isReported(m.totalNanoAiu),
+    reasoning: n(u.reasoningTokens),
+    hasReasoning: isReported(u.reasoningTokens),
   };
 }
 
@@ -378,6 +417,7 @@ function subtract(a, b) {
     count: Math.max(0, a.count - b.count),
     cost: Math.max(0, a.cost - b.cost),
     nano: Math.max(0, a.nano - b.nano),
+    reasoning: Math.max(0, a.reasoning - b.reasoning),
   };
 }
 
@@ -395,7 +435,7 @@ function modelDeltas(current, before) {
     const d = subtract(now, metricOf(before[name]));
     const t = normalize(d.input, d.output, d.cacheRead, d.cacheWrite);
     if (t.input + t.output + t.cacheRead + t.cacheWrite + d.count + d.cost + d.nano === 0) continue;
-    out.push({ name, t: { ...t, requests: d.count, premium: now.hasCost ? d.cost : null, nano: now.hasNano ? d.nano : null } });
+    out.push({ name, t: { ...t, requests: d.count, premium: now.hasCost ? d.cost : null, nano: now.hasNano ? d.nano : null, reasoning: now.hasReasoning ? d.reasoning : null } });
   }
   return out;
 }
@@ -518,6 +558,11 @@ function copyModels(models) {
       token_cache_creation: m.token_cache_creation,
       requests: m.requests,
     };
+    if (m.token_reasoning_output != null) c.token_reasoning_output = Math.min(m.token_reasoning_output, m.token_output);
+    if (m.auto_requests != null) {
+      c.auto_requests = m.auto_requests;
+      if (m.auto_ai_credits_nano != null) c.auto_ai_credits_nano = clampInt(m.auto_ai_credits_nano);
+    }
     if (m.by_effort != null) {
       c.by_effort = {};
       for (const e of Object.keys(m.by_effort)) {
@@ -529,6 +574,11 @@ function copyModels(models) {
           token_cache_creation: b.token_cache_creation,
           requests: b.requests,
         };
+        if (b.token_reasoning_output != null) c.by_effort[e].token_reasoning_output = Math.min(b.token_reasoning_output, b.token_output);
+        if (b.auto_requests != null) {
+          c.by_effort[e].auto_requests = b.auto_requests;
+          if (b.auto_ai_credits_nano != null) c.by_effort[e].auto_ai_credits_nano = clampInt(b.auto_ai_credits_nano);
+        }
       }
     }
     // Integers only (Plan 08 A4); premium requests may be fractional. A measured 0 is sent, so the portal prices that
@@ -575,6 +625,13 @@ export function segmentStats(work, { includeContext = false } = {}) {
   // The segment total is the sum of the per-model integers, else the session-level total.
   const total = credits > 0 ? Math.min(Number.MAX_SAFE_INTEGER, credits) : (work.sessionNano > 0 ? clampInt(work.sessionNano) : 0);
   if (total > 0) stats.ai_credits_nano = total;
+  // Cache-rewrite counters exist only for segments built from per-call rows.
+  if (work.cold != null) {
+    stats.cold_prefix_calls = work.cold.calls;
+    if (work.cold.nano != null) stats.cold_prefix_ai_credits_nano = clampInt(work.cold.nano);
+    stats.model_switches = work.cold.switches;
+    stats.idle_cold_calls = work.cold.idleCalls;
+  }
   if (includeContext && work.context != null) {
     stats.context_peak_tokens = Math.round(work.context.peak);
     stats.context_final_tokens = Math.round(work.context.final);

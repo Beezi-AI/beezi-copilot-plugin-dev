@@ -200,7 +200,7 @@ export async function runVscodeCheckpoint(input, deps = {}, options = {}) {
       const state = live ? loaded.vscode : null;
 
       // One account per session: the saved binding, else the Copilot Chat log or state.vscdb answer, saved once by a live run.
-      // Unresolved means no account and no plan: the CLI's current identity may be another GitHub user.
+      // Unresolved falls back to the account Copilot is signed in as now.
       let accountKey = loaded.accountKey;
       if (accountKey == null) {
         const found = await resolveVscodeAccount(session);
@@ -211,7 +211,7 @@ export async function runVscodeCheckpoint(input, deps = {}, options = {}) {
       }
       let billingFields = { billing_source: BillingSource.UNKNOWN };
       let identity = {};
-      if (accountKey != null && billingConfig != null) {
+      if (billingConfig != null) {
         try {
           billingFields = resolveBilling({ config: billingConfig, account: accountKey });
           identity = accountStamp({ sessionId, config: billingConfig, account: accountKey });

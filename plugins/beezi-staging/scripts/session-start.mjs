@@ -10,8 +10,8 @@ const input = normalizeHookInput(readHookInput());
 if (input == null) process.exit(0);
 recordHookSeen('SessionStart');
 
-// Most important first; `restart` and `targets` extend the plan's auth > update > billing > policy > consent > statusline; `not-tracked` (a rule the user set) is the lowest.
-const RELAY_ORDER = ['auth', 'restart', 'update', 'billing', 'policy', 'consent', 'statusline', 'targets', 'not-tracked'];
+// Most important first; `restart`, `joined` and `targets` extend the plan's auth > update > billing > policy > consent > statusline; `not-tracked` (a rule the user set) is the lowest.
+const RELAY_ORDER = ['auth', 'restart', 'update', 'billing', 'policy', 'consent', 'joined', 'statusline', 'targets', 'not-tracked'];
 
 function relayLine(notices) {
   for (const kind of RELAY_ORDER) {
@@ -50,19 +50,24 @@ runHook(DIAGNOSTIC_SOURCES.SESSION_START, async () => {
   } catch (error) { failure = error; }
   let workspacePrompt = null;
   let targetsNotice = null;
+  let joinedNotice = null;
   try {
     // Re-binds on every source with the workspaces runSessionStart just refreshed; asks only on startup or new.
     if (prompt != null) workspacePrompt = await prompt.buildWorkspacePrompt(input);
     if (prompt != null && input.source !== 'resume') targetsNotice = await prompt.buildTargetsNotice(input);
+    if (prompt != null && input.source !== 'resume') joinedNotice = await prompt.buildJoinedNotice();
   } catch { /* the ask is best-effort; the session still starts */ }
   if (targetsNotice != null && targetsNotice.context != null) notices.push({ text: targetsNotice.context, kind: 'targets', actionable: false });
   if (targetsNotice != null && targetsNotice.notTracked != null) notices.push({ text: targetsNotice.notTracked, kind: 'not-tracked', actionable: true });
+  if (joinedNotice != null) notices.push({ text: joinedNotice.text, kind: 'joined', actionable: true });
   const parts = workspacePrompt == null ? [] : [workspacePrompt];
   // A -p or autopilot run must stay clean: nobody is there to read a relayed line.
   const workspaceSession = await importHookModule('./workspace-session.mjs');
   const attended = workspaceSession == null
     || !workspaceSession.unattendedStatus({ env: process.env, input, sessionId: input.session_id }).unattended;
   const line = attended ? relayLine(notices) : null;
+  // Marked announced only once this notice is the one relayed, so a higher-priority notice doesn't swallow it.
+  if (joinedNotice != null && line === joinedNotice.text && failure == null) await joinedNotice.mark();
   if (line != null) parts.push(relayInstruction(line));
   const result = { additionalContext: parts.length === 0 ? null : parts.join('\n\n') };
   // A failure after the workspace prompt was built still writes the prompt.

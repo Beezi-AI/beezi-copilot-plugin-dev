@@ -114,6 +114,7 @@ function parseTenants(raw) {
       name: displayText(t.name),
       role: displayText(t.role),
       type: displayText(t.type),
+      joinedAt: typeof t.joinedAt === 'string' && Number.isFinite(Date.parse(t.joinedAt)) ? t.joinedAt : null,
     }));
 }
 
