@@ -86,10 +86,12 @@ Step 2 — the Copilot plan. Run EXACTLY:
 
 `node "<plugin-root>/scripts/billing-capture.mjs" --from-copilot --via login --account <key>`
 
-It reads only non-secret account information from Copilot on this machine. Its first line is for the
-user, followed by any change notices: write those verbatim. The `key=value` lines after them
-(`source=`, `plan=`, `plan-source=`, `identity=`) are machine lines for you only — never show them.
-Ask nothing and go to Step 4 unless the machine line is `plan-source=none`.
+It reads only non-secret account information from Copilot on this machine. Its first lines are for the
+user (a second `✓ Beezi billing for VS Code …` line appears when VS Code is signed in to another GitHub
+account), followed by any change notices: write those verbatim. The `key=value` lines after them
+(`source=`, `plan=`, `plan-source=`, `identity=`, and any `vscode-…=` lines) are machine lines for you
+only — never show them. Ask nothing and go to Step 4 unless a machine line is `plan-source=none` or
+`vscode-plan-source=none`.
 
 Step 3 — ask the plan, only when Step 2 printed the machine line `plan-source=none`. Ask "Which GitHub Copilot
 plan pays for your Copilot use on this machine?" with the choices "Copilot Free", "Copilot Student",
@@ -110,6 +112,15 @@ Run EXACTLY ONCE: `node "<plugin-root>/scripts/billing-capture.mjs" --plan <valu
 and write its first line and any change notices verbatim (never its `key=value` machine lines). "I
 don't know", a dismissal or any other answer runs nothing: say
 the link succeeded, the plan stays unknown, and `/beezi-staging-settings refresh` sets it later.
+
+Step 3v — VS Code's account, only when Step 2 printed the machine line `vscode-plan-source=none`. Ask
+"VS Code's Copilot is signed in as <vscode-login>, a different GitHub account. Which Copilot plan does
+<vscode-login> have?", where `<vscode-login>` is the value of the `vscode-login=` machine line, with the
+same choices as Step 3, and map the answer the same way. Run EXACTLY ONCE, with `<vscode-identity>` the
+value of the `vscode-identity=` machine line:
+`node "<plugin-root>/scripts/billing-capture.mjs" --plan <value> --github <vscode-identity> --via login-user --account <key>`
+and write its first line verbatim. "I don't know", a dismissal or any other answer runs nothing: say
+that account's plan stays unknown and `/beezi-staging-settings refresh` sets it later.
 
 Step 4 — default account, only when Step 1's output contained `/beezi-staging-analytics still reads from …`.
 Ask "Make <the account from Step 1> the account /beezi-staging-analytics reads from?" with "Yes" and "No".
