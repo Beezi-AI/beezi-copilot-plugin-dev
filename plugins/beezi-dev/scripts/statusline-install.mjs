@@ -1,5 +1,5 @@
-import { installStatusline, uninstallStatusline } from '../lib/statusline-install.mjs';
-import { friendlyMessage } from '../lib/friendly-error.mjs';
+import { installStatusline, uninstallStatusline } from '../lib/statusline/install.mjs';
+import { friendlyMessage } from '../lib/core/errors.mjs';
 
 // `[--uninstall]`; prints one ✓/✗ line (a refusal or the JSONC snippet adds lines after the ✗).
 try {
