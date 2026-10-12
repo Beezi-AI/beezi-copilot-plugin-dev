@@ -1,5 +1,5 @@
-import { runRefreshWorker, WORKER_BUDGET_MS } from '../lib/refresh-worker.mjs';
-import { maybeSpawnDiagnostics } from '../lib/diagnostics-trigger.mjs';
+import { runRefreshWorker, WORKER_BUDGET_MS } from '../lib/auth/refresh-worker.mjs';
+import { maybeSpawnDiagnostics } from '../lib/telemetry/trigger.mjs';
 
 // Detached entry point. Argv carries only what a bystander could already read from the store —
 // which generation to refresh and whether to force it. Never a token, never a home path.

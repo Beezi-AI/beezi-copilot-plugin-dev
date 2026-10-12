@@ -1,7 +1,7 @@
 ---
 name: beezi-local-login
 description: Link a Beezi account to this machine with a browser sign-in, record which Copilot plan pays for it, and upload past Copilot sessions. Use when the user wants to log in, sign in or connect to Beezi, add another Beezi account, or when a Beezi tool says this machine is not linked. Run it again to add accounts or resume an interrupted upload.
-argument-hint: ""
+argument-hint: "[pasted sign-in address]"
 allowed-tools: shell(node:*), ask_user
 ---
 
@@ -23,7 +23,8 @@ its choices and end the question with " You can pick more than one: type their n
 commas." When a step says "show … first", write that output verbatim in your reply before asking —
 the user reads it while answering. If the preflight printed `mode=argument-only`, do not call
 `ask_user` at all: in this skill, skip every question (a skipped question runs nothing) and keep going
-with the next step. Never stop the login for this reason.
+with the next step. Never stop the login for this reason. Step 1p's request for the pasted address is
+plain text, not an `ask_user` question, so it still happens in `mode=argument-only`.
 
 Step 0 — preflight, before anything else. Run EXACTLY:
 
@@ -34,18 +35,46 @@ that stops halfway leaves this machine half-linked. If the command itself is ref
 STOP as well, do not retry it another way, and tell the user this session's mode is blocking Beezi's
 scripts. If it starts with `✓`, continue.
 
-Step 1 — sign in (opens the browser and waits until the user approves there). Run EXACTLY:
+Arguments. When the arguments are `--no-browser` or ask to sign in without a browser, go to Step 1p.
+Any other non-empty arguments are the address pasted back from a paste-back sign-in started earlier
+(Step 1p): skip Step 1 and the first command of Step 1p, and run Step 1p's `--complete` command with the
+arguments as the reply (trimmed and escaped the same way).
+
+Step 1 — sign in (opens the browser and waits until the user approves there). Go to Step 1p instead
+when the user asks to sign in without a browser or on another device, or when this session runs where
+no browser can open on this machine (an SSH session, a container, a Codespace, a VS Code Remote window).
+Otherwise run EXACTLY:
 
 `node "<plugin-root>/scripts/login.mjs"`
 
 Show its output except its LAST line, the machine line `account=<key>` (never shown): remember that
 key; every later step passes it as `--account <key>`. If it says the machine is already linked as that
 account, say so and still continue with Step 1w, so a changed plan is refreshed and an interrupted
-upload resumes. If it prints no
-`account=` line, show the output and STOP. If the sign-in fails with a network or connection error, do
-not retry and do not continue: tell the user the sign-in could not reach Beezi, and that a sandboxed
-session may block the network. A failed sign-in never removes an earlier authorization; if the output
-says so, relay it verbatim and never tell the user they were logged out.
+upload resumes. If it prints no `account=` line, show the output and STOP, except in the case Step 1p
+covers. If the sign-in fails with a network or connection error, do not retry and do not continue:
+tell the user the sign-in could not reach Beezi, and that a sandboxed session may block the network.
+A failed sign-in never removes an earlier authorization; if the output says so, relay it verbatim and
+never tell the user they were logged out.
+
+Step 1p — paste-back sign-in. When Step 1 sends you here, when the user says the browser did not open,
+or when Step 1 failed because the sign-in timed out or was never approved in the browser. This is the
+one exception to "do not retry". Run EXACTLY:
+
+`node "<plugin-root>/scripts/login.mjs" --no-browser`
+
+Show its output except its last line, the machine line `login=pending` (never shown); that line is the
+expected end here, not a failure. Then ask in plain text, not with `ask_user`: "Paste the full address
+from your browser's address bar after signing in." End your reply and wait for the answer. An empty
+reply or "cancel" stops here; the user can finish later with /beezi-local-login followed by the address. Any
+other reply is the pasted address: trim it and, because the template already single-quotes it, escape
+each `'` in it for the shell you run the command in: in bash or sh replace it with `'\''`, in PowerShell
+replace it with `''` (two single quotes) and also double each `‘`, `’`, `‚` and `‛`. Run EXACTLY ONCE,
+with the escaped address in place of `<pasted>`:
+
+`node "<plugin-root>/scripts/login.mjs" --complete '<pasted>'`
+
+Handle its output exactly like Step 1's: its last line is `account=<key>`, and without one, show the
+output and STOP.
 
 Step 1w — new folders. Run EXACTLY (for you only; do not show it):
 
@@ -142,7 +171,7 @@ Lines:
   `new=yes` is one just joined;
 - `J<i>. <short> (<label>), <k> sessions, now: <where> account=<key> kind=<repo|folder|outside> match=<…> now=<ids|none|pending>`
   is one repo or folder, where `<where>` is where it sends today: workspace names, `not tracked` or
-  `no rule yet`. `J<i>. outside a project, …` is sessions in the home folder, `/` or a temp folder;
+  `no rule yet`. `J<i>. outside a project, …` is sessions in the home folder, `/`, a temp folder or a Copilot app chat folder;
 - `J<i>-command=<command>` comes right after its `J` line and ends in a literal `<tenants>`;
 - `add-all-command=<command>`;
 - `done-command=<command>`;
@@ -184,8 +213,8 @@ Then, repos and folders with no rule. Run EXACTLY (for you only, except the line
 `node "<plugin-root>/scripts/workspace.mjs" routes --account <key>`
 
 Lines: `W.` lines as in Step 1w; `P<i>. <short> (<label>), <k> sessions account=<key> kind=<repo|folder|outside> match=<…>`
-(one repo or folder; `P<i>. outside a project, …` is every past session in the home folder, `/` or a
-temp folder); `P<i>-command=<command>` right after its `P` line, ending in a literal `<tenants>`;
+(one repo or folder; `P<i>. outside a project, …` is every past session in the home folder, `/`, a
+temp folder or a Copilot app chat folder); `P<i>-command=<command>` right after its `P` line, ending in a literal `<tenants>`;
 `all-command=<command>`; `<n> other past sessions have no recorded folder and are not sent.` (for one
 session: `1 other past session has no recorded folder and is not sent.`) — write that line verbatim,
 once; `routes=<total>` last. `routes=0` → go to Step 5b.

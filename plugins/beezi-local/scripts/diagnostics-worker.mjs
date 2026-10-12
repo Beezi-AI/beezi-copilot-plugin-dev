@@ -1,5 +1,5 @@
-import { suppressRecording } from '../lib/telemetry.mjs';
-import { flushDiagnostics } from '../lib/telemetry-flush.mjs';
+import { suppressRecording } from '../lib/telemetry/recorder.mjs';
+import { flushDiagnostics } from '../lib/telemetry/flush.mjs';
 
 // Detached entry point. Argv carries nothing: consent, the queue and the backoff all live in
 // files this process rereads itself.

@@ -263,8 +263,7 @@ Otherwise ask these two questions, one after the other:
 2. "Should Beezi's status line record the model, context use and allow-all state of your Copilot
    sessions?" — "On — your existing status line still looks the same", "Off".
 
-When `keys` printed `statusline=unsupported`, ask only question 1, and for `statusline on|off` in the
-arguments just show the `privacy` output. Add ", current setting" to the choice matching `crash=`
+Add ", current setting" to the choice matching `crash=`
 (`correlate`, `on`, `off`, `anonymous`) and the one matching `statusline=` (`on`, `off`). Then run only what changed: a different crash-report
 answer → `node "<plugin-root>/scripts/telemetry.mjs" <correlate|on|off|anonymous>`; a different
 status-line answer → `node "<plugin-root>/scripts/statusline-install.mjs"` for On, or with

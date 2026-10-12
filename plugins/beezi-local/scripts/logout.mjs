@@ -1,5 +1,5 @@
-import { runLogout } from '../lib/logout.mjs';
-import { friendlyMessage } from '../lib/friendly-error.mjs';
+import { runLogout } from '../lib/commands/logout.mjs';
+import { friendlyMessage } from '../lib/core/errors.mjs';
 
 async function main() {
   const args = process.argv.slice(2);

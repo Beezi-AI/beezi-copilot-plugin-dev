@@ -25,20 +25,28 @@ marked "unverified" in its sentence.
 - how many calls had to re-write Copilot's prompt cache (for example after a pause, a model switch or a compaction), how many model switches there were, and the AI credits those calls used (counts only; models that do not report cache writes are never counted as cold);
 - tool-call counts by category (file, search, internet, MCP, shell, skill, other), an estimate of
   how large the results were, and the names of the MCP servers, skills and plugins that were used;
-- per tool, how many calls ran and how many failed, by kind of failure (permission denied, timeout, interrupted, missing file, access or setup, command exited non-zero, other), never the tool's input or output; <!-- gate: V-47 --> the permission-denied kind is unverified;
+- per tool, how many calls ran and how many failed, by kind of failure (permission denied, timeout, interrupted, missing file, access or setup, command exited non-zero, other), never the tool's input or output; the permission-denied kind is unverified;
 - how many times Copilot compacted the context;
 - durations, and an activity timeline (working, planning, waiting for you, idle);
 - lines added and removed, files changed, and how many changed files have each extension;
 - the branch, and the `origin` remote with credentials stripped (or `local:<folder name>` outside a
-  repository or when there is no remote);
+  repository or when there is no remote, and `local:copilot-chats` for every Copilot app chat folder);
 - Copilot's session name. When Copilot hasn't named the session, that is the start of your first
   prompt, cut to 200 characters, with anything that looks like a secret or a file path removed;
 - the id, type and name of any subagents;
+- for the main agent: time to first token, call duration, the model's context window and why a turn was
+  aborted (for example `user_abort`), when Copilot records them;
 - whether the repository has project instructions files, how many lines each has, and each file's path inside the repository (only `.github/copilot-instructions.md`, `AGENTS.md`, `CLAUDE.md` and `GEMINI.md`);
-- whether the session ran in the Copilot CLI or in the GitHub Copilot app (not sent once a session has been resumed: Copilot does not record which client resumed it);
+- which client created the session (`source`: `cli`, `app`, `vscode` for VS Code Local chat or
+  `vscode-agent-host`), with that client's name and version when the session file records them. It is
+  read from the session's own start, so a resumed session keeps it;
 - your time zone, and (as request headers) this machine's host name, its Beezi sign-in client id and
   the plugin version, which Beezi shows in your list of linked machines;
-- your Copilot plan and the GitHub account Copilot is signed in with.
+- your Copilot plan and the GitHub account the session ran under (see [Billing](#billing-in-ai-credits)).
+
+**Sent about the account, not a session:** the monthly premium-request quota Copilot reports (percent
+used, reset date and, on an unlimited plan, the count used), posted only to the Beezi workspaces this
+GitHub account works for.
 
 **Sent when a turn fails:** the error class, type, code and status, when it happened, and Copilot's
 error message (cut to 1000 characters).
@@ -64,36 +72,43 @@ mcp.json                             # MCP stdio server `beezi-copilot`, started
 env.json                             # environment identity: name, apiBase, updateManifestUrl
 com.github.copilot/hooks/hooks.json  # Copilot-only: hook registration
 skills/<name>/SKILL.md               # one folder per skill; the folder name equals the skill name
-lib/  scripts/                       # zero-dependency Node engine, on a Node 13.2 floor
-tools/verify-minimum-runtime.cjs     # parses every lib/ and scripts/ file and imports lib/
+lib/<area>/*.mjs                     # zero-dependency Node engine, on a Node 13.2 floor, one folder per area
+scripts/*.mjs                        # hook, skill and MCP entry points
+tools/verify-minimum-runtime.cjs     # parses every lib/ and scripts/ file, imports lib/, checks the Node 13.2 floor
 ```
 
 `env.json` ships in every build. The production build carries `{ "name": "", "apiBase": … }`; an
-internal build carries its environment name (see [Variants](#variants)). `lib/paths.mjs` and
-`lib/config.mjs` are the only readers.
+internal build carries its environment name (see [Variants](#variants)). `lib/config/paths.mjs` and
+`lib/config/api.mjs` are the only readers.
 
 ## Entry points
 
 **Hooks.** `com.github.copilot/hooks/hooks.json` registers each script below. Events are written in
 PascalCase, which makes Copilot send Claude-style snake_case payloads and Claude tool names
-(`Bash`); `subagentStart` exists only in camelCase and is registered that way. Every script exits 0
-and prints nothing, except `session-start.mjs`, which prints at most one JSON object.
+(`Bash`). `subagentStart`, `postToolUseFailure` and `notification` are registered in camelCase, the
+form every Copilot CLI release that has them accepts; they get camelCase payloads. VS Code Local chat
+ignores those three, `PermissionRequest` and any `matcher`. Every script exits 0 and prints nothing, except
+`session-start.mjs`, which prints at most one JSON object: `additionalContext` for the Copilot CLI and
+the same text in `hookSpecificOutput.additionalContext` for VS Code.
 
 | Event | Script | Work |
 |---|---|---|
 | `SessionStart` | `session-start.mjs` | link check, notices, workspace question, queue flush, prune, billing reconcile, account check-in, update check |
-| `UserPromptSubmit` | `track-prompt.mjs` | records the interaction mode; asks for a background quota refresh when one is due (a no-op while the quota probe is off) |
-| `PostToolUse` (shell) | `checkpoint.mjs` | checkpoint on `git commit`, `switch` and `checkout` |
+| `SessionStart` (detached) | `catch-up-worker.mjs` | checkpoints up to 3 recent sessions whose file grew past what was reported or whose final shutdown is still owed; one per machine at a time |
+| `UserPromptSubmit` | `track-prompt.mjs` | records the interaction mode; asks for a background quota refresh when one is due |
+| `PostToolUse` (shell) | `checkpoint.mjs` | checkpoint after `git commit`, `switch`, `checkout`, `merge`, `rebase` or `pull` (also with `-C <dir>`) and `gh pr checkout` |
 | `PostToolUse` | `pulse.mjs` | checkpoint at most every 15 minutes |
+| `postToolUseFailure` | `pulse.mjs` | the same pulse after a failed tool call |
+| `notification` (`agent_completed`, `agent_idle`) | `pulse.mjs` | the same pulse when a background agent finishes or goes idle |
 | `PreCompact` | `pulse.mjs --precompact` | checkpoint before compaction |
 | `PermissionRequest` | `permission-request.mjs` | appends an approval-wait marker; prints nothing |
 | `subagentStart` | `subagent-start.mjs` | appends a subagent start marker |
 | `SubagentStop` | `subagent-stop.mjs` | appends a subagent end marker |
-| `Stop` | `stop.mjs` | full turn-end checkpoint and timeline |
-| `SessionEnd` | `report.mjs` | final checkpoint; Copilot writes `session.shutdown` after this hook returns, so it also starts `shutdown-worker.mjs`, a detached process (one per session) that waits up to 12 minutes for that event and bills it |
+| `Stop` | `stop.mjs` | full turn-end checkpoint and timeline; in VS Code Local chat only requests already finished are billed, the rest at the next run |
+| `SessionEnd` | `report.mjs` | final checkpoint; Copilot writes `session.shutdown` after this hook returns, so it also starts `shutdown-worker.mjs`, a detached process (one per session) that waits up to 12 minutes for that event and bills it. No worker starts for a VS Code Agent Host session, whose shutdown comes when VS Code disposes the session, or while one already waits for this session |
 | `ErrorOccurred` | `error-occurred.mjs` | hands the failed model call to the checkpoint, which delivers the error (replaces the Claude `StopFailure`) |
 
-**MCP server.** `scripts/mcp.mjs` speaks MCP over stdio. `lib/mcp-bridge.mjs` forwards to
+**MCP server.** `scripts/mcp.mjs` speaks MCP over stdio. `lib/mcp/bridge.mjs` forwards to
 `<apiBase>/mcp` with the stored login and the default account, and adds one local tool,
 `beezi_status`. When no account is linked, `beezi_status` is the only tool and the server answers
 `initialize` itself, because a failed handshake would strand the server for the whole session. The
@@ -165,13 +180,16 @@ those still happen where `SessionStart` never fires. It writes its notes to
 | `<copilot home>/settings.json` | read for `askUser`; written only by the status line install |
 
 `<copilot home>` is `COPILOT_HOME` when set and `~/.copilot` otherwise. Every location comes from
-`lib/copilot-paths.mjs`. The plugin writes nothing under the Copilot home except the status line
+`lib/config/copilot-paths.mjs`. The plugin writes nothing under the Copilot home except the status line
 setting, and only on request.
 
 ### VS Code Local sessions
 
 VS Code's built-in Copilot Chat ("Local" agent) keeps its sessions in VS Code's own storage, not in
-the Copilot home. The plugin reads them read-only from `Code` and `Code - Insiders`.
+the Copilot home. The plugin reads them read-only from `Code`, `Code - Insiders`, `Code - OSS` and
+`VSCodium`, from the folders `VSCODE_APPDATA` and `VSCODE_PORTABLE` name, from the Flatpak build on Linux,
+and from a VS Code Server's `~/.vscode-server` and `~/.vscode-remote` on a remote host (where a remote
+window keeps its chat sessions is unverified). Cursor and Windsurf are not read.
 
 | File | Read for |
 |---|---|
@@ -190,8 +208,8 @@ the Copilot home. The plugin reads them read-only from `Code` and `Code - Inside
     Requests from versions before 0.50 have no credits and send `premium_requests` from the `Nx`
     multiplier instead.
   - Tokens: `token_output` is the request's `completionTokens`, summed over its model calls.
-    `token_input` is its `promptTokens`, which VS Code records only for the last call, so input is
-    under-reported. There is no cache split.
+    `token_input` sums every `promptTokens` value VS Code wrote for the request. VS Code overwrites
+    that value between calls, so input is a lower bound. There is no cache split.
   - Model: a request with no model of its own borrows the nearest one in the session. A session
     with no model at all uploads nothing.
 - **Account.** It comes from the Copilot Chat log of the VS Code launch that covered the session,
@@ -203,6 +221,10 @@ the Copilot home. The plugin reads them read-only from `Code` and `Code - Inside
   - The plugin's hooks reach these sessions when VS Code runs them (`chat.useHooks`, trusted
     workspace).
   - `/beezi-sync` uploads the rest.
+  - An organization can turn off hooks ("Editor preview features") or MCP servers for Local chat.
+    `/beezi-status` says so when VS Code's cached policy shows it; those sessions are then captured
+    only while the Copilot CLI or app runs the watcher, or by `/beezi-sync`. Sessions on the Copilot
+    (Agent Host) harness are still captured live.
 
 ## Token modes
 
@@ -241,18 +263,26 @@ the Copilot home. The plugin reads them read-only from `Code` and `Code - Inside
 
 ## Billing in AI credits
 
-- The plugin sends raw nano AIU (`ai_credits_nano`, per model and per segment) and the Beezi server
-  converts it. For legacy plans it sends `premium_requests`.
-- `billing_source` is `subscription` or `unknown`. `subscription_plan` is one of `copilot_free`,
-  `copilot_student`, `copilot_pro`, `copilot_pro_plus`, `copilot_max`, `copilot_business`,
-  `copilot_enterprise` or `unknown`. `subscription_type` is `individual`, `organization` or
-  `enterprise`. A plan the user has not declared is omitted, never sent as `unknown`.
-- **Where the plan comes from.** `readLocalPlanRaw` in `lib/copilot-account.mjs` takes the Copilot
-  runtime's `copilot_plan` and `access_type_sku` when it has them, else the sku VS Code's Copilot Chat
-  logged for the same GitHub account. A sku alone names Free, Student, Business and Enterprise; Pro
-  and Pro+ need the runtime's plan, and a sku that names no plan is ignored. With no plan found, `/beezi-login` and
-  `/beezi-settings` ask the user. A declared plan wins over an observed one and applies only to the
-  GitHub account it was declared for.
+- **Credits.** The plugin sends raw nano AIU (`ai_credits_nano`, per model and per segment) and the
+  Beezi server converts it. For legacy plans it sends `premium_requests`.
+- **Billing source.** `billing_source` is `subscription` when Copilot is signed in to GitHub and the
+  session used Copilot's own models. It is `unknown` when the session ran on your own model provider
+  (`COPILOT_PROVIDER_BASE_URL` for the CLI, a custom provider in the Copilot app, a bring-your-own-key
+  model in VS Code), when Copilot runs offline, and when no GitHub sign-in can be read.
+- **Plan.** With `subscription`, `subscription_plan` is one of `copilot_free`, `copilot_student`,
+  `copilot_pro`, `copilot_pro_plus`, `copilot_max`, `copilot_business` or `copilot_enterprise`, and
+  `subscription_type` is `individual`, `organization` or `enterprise`. Both are omitted when the plan is
+  not known; neither is ever sent as `unknown`.
+- **Where the plan comes from**, newest reading first, for the GitHub account the session ran under:
+
+  | Source | Read from |
+  |---|---|
+  | A plan you declared | `/beezi-login` or `/beezi-settings refresh`, for one GitHub account; a newer observed plan replaces it |
+  | The Copilot runtime | its account answer from the quota probe below, else its own user cache |
+  | VS Code | the Copilot entitlement VS Code stored for the newest signed-in launch, else the plan sku Copilot Chat logged |
+
+  A report carries the plan that was in force when the session started, so a session uploaded late
+  is not repriced by a later plan change.
 - **Two sign-ins.** The Copilot CLI and VS Code's Copilot Chat sign in separately, and a token
   environment variable (`COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`) overrides only the CLI's.
   `billing.json` keeps an observed and a declared plan per GitHub account, so a VS Code session bound
@@ -260,25 +290,25 @@ the Copilot home. The plugin reads them read-only from `Code` and `Code - Inside
   differs from the CLI's and has no plan, `/beezi-login` and `/beezi-settings refresh` ask for it
   separately (`billing-capture.mjs --plan <plan> --github <host/login>`).
 - **The account** on a report is `account_uuid`, the lowercase GitHub identity `<host>/<login>`, up to
-  64 characters. It is omitted when Copilot is signed in through a token environment variable, or
-  has several signed-in users and no active one can be told. No email is sent.
-- **One account per session.** Copilot writes no email or user id into a session. The plugin binds
-  each session to the account that ran it, so a later account switch never moves an earlier
-  session. The first source that names one wins:
-  1. Copilot's own process log, `<copilot home>/logs/process-*.log`: the sign-in or settings line
-     next to the line that registered that session id. Only the host and login are kept.
-  2. A `Signed in successfully as <login>!` notice in the transcript, written when `/login` runs
-     inside the session.
+  64 characters. No email is sent. The account a session ran under is found in this order:
 
-  A live session saves the binding in its state file on the first checkpoint that finds one and
-  never re-resolves it. A plan applies only to the account it was declared or observed for. When
-  neither source names an account, the session takes the current account, live and in sync or
-  backfill alike.
-- **The monthly quota probe is off in this build.** The code that would ask the Copilot runtime for
-  the monthly premium-request quota and post it to `/me/copilot/usage` as
-  `limits: [{ kind: "monthly", … }]` is present but inert (`SERVER_ARGS` in `lib/quota-copilot.mjs` is
-  unset), so no usage snapshot is posted. Copilot does not expose session or weekly rate-limit usage
-  anywhere, and none is reported.
+  | Surface | Order |
+  |---|---|
+  | Copilot CLI and app | the account named in the hook's own environment (live hooks only); the Copilot app's record of the session; for a VS Code Agent Host session, the account VS Code's Copilot Chat had at its start; Copilot's process log next to the line that registered the session; a `Signed in successfully as <login>!` notice in the transcript |
+  | VS Code Local chat | the Copilot Chat log of the launch that covered the session, else `state.vscdb` when the session's own account label agrees |
+
+  A live session saves the account on the first checkpoint that finds one and never re-resolves it.
+  When none of these names an account and this machine knows only one GitHub account, that account
+  is used. When it knows several (Copilot CLI logins, Copilot app accounts, VS Code's sign-in), the
+  report carries no account rather than a guess. The same order applies in live capture,
+  `/beezi-sync` and the login upload.
+- **Monthly quota.** A detached worker asks the Copilot runtime (`copilot --headless --stdio`,
+  `account.getQuota` and `account.getCurrentAuth`) for the monthly premium-request quota at most every
+  15 minutes, behind a lock and a failure backoff, and posts it to `/me/copilot/usage` as
+  `limits: [{ kind: "monthly", … }]` (plus `monthly_used` on an unlimited plan). No hook ever starts the
+  runtime itself. A machine with only the Copilot app or VS Code uses the runtime's own user cache
+  instead. `BEEZI_COPILOT_QUOTA=0` turns the probe off. Copilot exposes no session or weekly
+  rate-limit usage, and none is reported.
 
 ## Report contract and backend-first
 
@@ -286,8 +316,9 @@ Reports use the Claude plugin's `POST /sessions/report` shape plus these optiona
 `models.<model>.ai_credits_nano`, `models.<model>.premium_requests`, `models.<model>.token_reasoning_output`,
 `models.<model>.auto_requests`, `models.<model>.auto_ai_credits_nano`, `ai_credits_nano`, `usage_source`,
 `project_instructions_status`, `project_instructions_files`, `cold_prefix_calls`,
-`cold_prefix_ai_credits_nano`, `model_switches`, `idle_cold_calls`, `compactions`, `operations.failures`
-and `source` (`cli` or `app`).
+`cold_prefix_ai_credits_nano`, `model_switches`, `idle_cold_calls`, `compactions`, `operations.failures`,
+`time_to_first_token_ms`, `duration_ms`, `turn_aborted`, `model_context_window`, `originator`,
+`cli_version` and `source` (`cli`, `app`, `vscode` or `vscode-agent-host`).
 
 The Beezi API validates reports against a strict whitelist, so **one unknown field rejects the whole
 report**. A field ships in the plugin only after the API change that accepts it is deployed to every
@@ -309,15 +340,15 @@ Analytics held for an unanswered question wait on disk and are sent once you ans
 ## Data root
 
 `~/.beezi-copilot`, plus `-<env>` on an internal build. `BEEZI_COPILOT_HOME` overrides it. The tree
-comes from `lib/paths.mjs`:
+comes from `lib/config/paths.mjs`:
 
 ```
 accounts.json                 # linked accounts and the default
-accounts/<key>/               # per account: credentials/, queue/, tracking.json, audit-ledger*.json, coverage*.json, account-sync.json, usage-pending.json
+accounts/<key>/               # per account: credentials/, queue/, health.json, tracking.json, audit-ledger*.json, coverage*.json, account-sync.json, usage-pending.json
 state/                        # per-session state, markers and locks (swept after 14 days)
 billing.json                  # observed and declared Copilot plans per GitHub account, and the last identity seen
 repo-map.json                 # directory-to-repository cache
-quota-copilot.json  usage-series.json   # monthly quota cache and usage series; written only when the quota probe is on
+quota-copilot.json  usage-series.json   # monthly quota cache and usage series
 update-check.json  plan-nudge.json  upgrade-notice.json  installation.json
 telemetry.json  telemetry-send.json  telemetry/
 watcher.json  locks/  logs/watcher.log  hooks-seen.json
@@ -349,7 +380,7 @@ the vendor from the header.
 | `BEEZI_COPILOT_HOME` | `~/.beezi-copilot` | queue, state and credentials |
 | `BEEZI_UPDATE_MANIFEST_URL` | the build's `env.json` `updateManifestUrl` | marketplace manifest the update check reads; for local verification |
 | `BEEZI_COPILOT_WATCHER` | unset (on) | `0`, `false`, `no`, `off` or `disabled` turns the watcher off |
-| `BEEZI_COPILOT_QUOTA` | unset (on) | `0`, `false`, `no` or `off` turns the monthly quota probe off; it is off in this build whatever this says |
+| `BEEZI_COPILOT_QUOTA` | unset (on) | `0`, `false`, `no` or `off` turns the monthly quota probe off |
 | `BEEZI_COPILOT_CLI` | `copilot` | the binary the quota probe starts, for a machine where `copilot` is not on the `PATH` hooks inherit |
 | `BEEZI_STATUSLINE_CHAIN` | set by the status line shim | the status line command Beezi wrapped; it runs and its output is shown unchanged |
 | `BEEZI_STATUSLINE_SILENT` | unset | `1` keeps the status line capture and shows nothing |
@@ -389,9 +420,9 @@ At session start the plugin compares its own version (from `plugin.json`) with t
 marketplace manifest at `env.json` `updateManifestUrl`. The check runs at most once an hour and gives
 up after 1.5 seconds. Being offline, having no manifest URL and an unreadable manifest are all silent.
 The plugin never updates itself. When a newer version is published it prints one line with the
-commands: `copilot plugin marketplace update <marketplace>`, then `copilot plugin update <plugin>`,
-then start a new Copilot session. `/beezi-status` shows the same
-line.
+commands: `copilot plugin marketplace update <marketplace>`, then `copilot plugin update <plugin>`
+(in the Copilot app: Customize → Plugins → Update), then start a new Copilot session.
+`/beezi-status` shows the same line.
 
 ## Coexistence
 
@@ -399,15 +430,28 @@ line.
   and MCP server names are distinct too: `beezi-copilot` here against `beezi` there.
 - **Codex plugin.** Separate data roots.
 
+## Node.js and the network
+
+- Hooks, skills and the MCP server run `node` from the `PATH` Copilot hands them. Node.js 13.2 or later
+  runs the plugin. Per-call token detail needs Node.js 22.13 or later (`node:sqlite`); older Node
+  reports session totals, and `/beezi-status` says which one this machine uses. A machine without
+  `node` on that `PATH` captures nothing; Copilot shows each hook as failed.
+- Node.js uses its own certificate list. Behind a TLS-inspecting proxy, set `NODE_EXTRA_CA_CERTS` to a
+  PEM file with your company's root certificate (any Node version), or `NODE_USE_SYSTEM_CA=1` to use
+  the operating system's store (Node.js 22.19 or later, 24.6 or later). Either must be set in the
+  environment Copilot starts from.
+- The plugin does not apply proxy settings such as `HTTPS_PROXY`. On a network that allows traffic
+  only through a proxy, uploads fail and wait in the queue; `/beezi-status` shows them.
+
 ## Known caveats
 
 - **Platforms.** Tested on macOS only. Windows path handling and the Linux bash hooks were checked
   in emulation. `git` and `secret-tool` run from an absolute path found on `PATH`, never from the
   repo folder. The macOS keychain is written through `/usr/bin/security -i`, so the secret never
   appears in a process's arguments. Windows renames and locks retry on EPERM, EBUSY and EACCES.
-  The PowerShell hooks force UTF-8. Still unverified on real machines:
+  The PowerShell hooks force UTF-8; hook input is read with retries on a non-blocking pipe. VS Code
+  runs Windows hooks through Windows PowerShell 5.1. Still unverified on real machines:
   - Windows hook stdin encoding under PowerShell 5.1 and 7;
-  - the shell VS Code uses for these hooks on Windows;
   - whether `shutdown-worker.mjs` survives Copilot exiting;
   - Credential Manager limits;
   - Linux keyring behaviour on desktop and headless machines.
@@ -418,9 +462,9 @@ line.
   the `session.error` events in the session file.
 - `PermissionRequest` output is a decision channel, so the script prints nothing at all. Any byte on
   stdout could approve or deny a real prompt.
-- Whether `SessionStart` output shown to the user (`systemMessage`) is honoured by Copilot is
-  unverified. The most important actionable notice rides `additionalContext` as one line the model is
-  asked to relay.
+- The most important actionable `SessionStart` notice rides `additionalContext` as one line the model
+  is asked to relay. Delivery trouble (reports refused or waiting for more than a day) is one of those
+  notices; `/beezi-status` shows each account's queue, last error and where its sign-in is stored.
 - A `node:sqlite` ExperimentalWarning must not reach a hook's stderr, so hook commands run
   `node --no-warnings`.
 - On VS Code Agent Host only part of the hook events fire, which is why the watcher exists.
