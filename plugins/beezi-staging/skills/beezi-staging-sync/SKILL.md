@@ -49,7 +49,7 @@ Lines:
   `new=yes` is one just joined;
 - `J<i>. <short> (<label>), <k> sessions, now: <where> account=<key> kind=<repo|folder|outside> match=<…> now=<ids|none|pending>`
   is one repo or folder, where `<where>` is where it sends today: workspace names, `not tracked` or
-  `no rule yet`. `J<i>. outside a project, …` is sessions in the home folder, `/` or a temp folder;
+  `no rule yet`. `J<i>. outside a project, …` is sessions in the home folder, `/`, a temp folder or a Copilot app chat folder;
 - `J<i>-command=<command>` comes right after its `J` line and ends in a literal `<tenants>`;
 - `add-all-command=<command>`;
 - `done-command=<command>`;

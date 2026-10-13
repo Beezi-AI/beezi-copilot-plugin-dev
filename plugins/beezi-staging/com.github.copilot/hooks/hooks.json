@@ -11,6 +11,9 @@
       { "type": "command", "matcher": "Bash|bash|powershell", "bash": "node --no-warnings \"$PLUGIN_ROOT/scripts/checkpoint.mjs\"", "powershell": "[Console]::InputEncoding=[Console]::OutputEncoding=$OutputEncoding=[Text.UTF8Encoding]::new($false); node --no-warnings \"$($env:PLUGIN_ROOT)/scripts/checkpoint.mjs\"", "timeoutSec": 10 },
       { "type": "command", "bash": "node --no-warnings \"$PLUGIN_ROOT/scripts/pulse.mjs\"", "powershell": "[Console]::InputEncoding=[Console]::OutputEncoding=$OutputEncoding=[Text.UTF8Encoding]::new($false); node --no-warnings \"$($env:PLUGIN_ROOT)/scripts/pulse.mjs\"", "timeoutSec": 10 }
     ],
+    "postToolUseFailure": [
+      { "type": "command", "bash": "node --no-warnings \"$PLUGIN_ROOT/scripts/pulse.mjs\"", "powershell": "[Console]::InputEncoding=[Console]::OutputEncoding=$OutputEncoding=[Text.UTF8Encoding]::new($false); node --no-warnings \"$($env:PLUGIN_ROOT)/scripts/pulse.mjs\"", "timeoutSec": 10 }
+    ],
     "PermissionRequest": [
       { "type": "command", "bash": "node --no-warnings \"$PLUGIN_ROOT/scripts/permission-request.mjs\"", "powershell": "[Console]::InputEncoding=[Console]::OutputEncoding=$OutputEncoding=[Text.UTF8Encoding]::new($false); node --no-warnings \"$($env:PLUGIN_ROOT)/scripts/permission-request.mjs\"", "timeoutSec": 5 }
     ],
@@ -31,6 +34,9 @@
     ],
     "PreCompact": [
       { "type": "command", "bash": "node --no-warnings \"$PLUGIN_ROOT/scripts/pulse.mjs\" --precompact", "powershell": "[Console]::InputEncoding=[Console]::OutputEncoding=$OutputEncoding=[Text.UTF8Encoding]::new($false); node --no-warnings \"$($env:PLUGIN_ROOT)/scripts/pulse.mjs\" --precompact", "timeoutSec": 10 }
+    ],
+    "notification": [
+      { "type": "command", "matcher": "agent_completed|agent_idle", "bash": "node --no-warnings \"$PLUGIN_ROOT/scripts/pulse.mjs\"", "powershell": "[Console]::InputEncoding=[Console]::OutputEncoding=$OutputEncoding=[Text.UTF8Encoding]::new($false); node --no-warnings \"$($env:PLUGIN_ROOT)/scripts/pulse.mjs\"", "timeoutSec": 10 }
     ]
   }
 }
