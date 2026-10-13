@@ -7,7 +7,7 @@ import { releaseHeldQueue } from '../../delivery/queue-files.mjs';
 import { UserError } from '../../core/errors.mjs';
 import { accountLabel, newFoldersLabel, tenantNames, workspaceLines } from '../../ux/workspace-lines.mjs';
 import { machineLine } from '../../ux/machine-lines.mjs';
-import { USAGE, mayPersist, parseSessionFlag, requireMulti, resolveAccount, resolveSession, selection } from './args.mjs';
+import { USAGE, afterRuleWrite, mayPersist, parseSessionFlag, requireMulti, resolveAccount, resolveSession, selection } from './args.mjs';
 import { checkIn } from './rules.mjs';
 
 async function showNewFolders(row) {
@@ -22,7 +22,7 @@ async function showNewFolders(row) {
   console.log(machineLine([['new-folders', newFoldersNow.mode], ['set', newFoldersNow.set ? 'yes' : 'no'], ['multi', 'yes'], ['account', row.key]]));
 }
 
-export async function newFolders(argv) {
+export async function newFolders(argv, cx = { deferUpload: false }) {
   const { session, rest: afterSession } = parseSessionFlag(argv);
   const { account, rest } = await parseAccountFlag(afterSession);
   const row = await resolveAccount(account);
@@ -50,5 +50,6 @@ export async function newFolders(argv) {
       if (before.targets.indexOf(id) === -1) await checkIn(fresh, id);
     }
   }
+  await afterRuleWrite(row.key, cx, cx.deps);
   console.log(machineLine([['new-folders', mode]]));
 }

@@ -15,7 +15,7 @@ import { sessionFor } from '../auth/recipients.mjs';
 import { joinNames } from '../core/text.mjs';
 
 // Only a new session asks; resume never does (Copilot has no clear or compact source).
-const ASK_SOURCES = ['startup', 'new'];
+export const ASK_SOURCES = ['startup', 'new'];
 const ALL_LABEL = 'All of these workspaces';
 // With no autopilot signal at all the ask cannot be told from an auto-answered one, so it relays a line instead.
 const RELAY_TEXT = 'Tell the user in one line: "Beezi is holding this folder\'s analytics until you choose a workspace. Run /beezi-local-settings rules."';
@@ -29,14 +29,14 @@ export function pluginRoot(deps = {}) {
   return root.replace(/\\/g, '/');
 }
 
-async function linkedRows(deps) {
+export async function linkedRows(deps) {
   const listAccounts = deps.listAccounts == null ? _listAccounts : deps.listAccounts;
   const rows = await listAccounts(deps);
   return rows.filter((a) => a.status === AccountStatus.LINKED);
 }
 
 // Only rows with a usable login (runSessionStart's "linked" test): one whose credentials are gone is neither asked nor told.
-async function withUsableLogin(rows, deps) {
+export async function withUsableLogin(rows, deps) {
   const live = await Promise.all(rows.map((row) => sessionFor(row.key, deps).catch(() => null)));
   return rows.filter((row, i) => live[i] != null);
 }
@@ -53,11 +53,11 @@ function inline(value) {
 }
 
 // A multi-workspace row's tenantName is the web-side workspace, so accounts are named by email.
-function emailOf(row) {
+export function emailOf(row) {
   return inline(row.email || row.key);
 }
 
-function nameOf(row, id) {
+export function nameOf(row, id) {
   const t = tenantById(row, id);
   return t != null && t.name ? t.name : id;
 }

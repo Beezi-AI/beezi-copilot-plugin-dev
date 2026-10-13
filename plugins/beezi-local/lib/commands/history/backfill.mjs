@@ -10,6 +10,7 @@ import { friendlyMessage } from '../../core/errors.mjs';
 import { usesRules } from '../../workspace/rule-model.mjs';
 import { readTrackingState, matchesIdentity } from '../../state/tracking.mjs';
 import { NO_PAST_SESSIONS_LINE, backfillOutcome, excludedLine, joinedOutcome, routeSummary } from '../../ux/history-messages.mjs';
+import { startHistoryWorker } from '../../history/pending-trigger.mjs';
 import { fail, forEachRun, printOutcome, runHistory } from './run-history.mjs';
 
 // One workspace's run (--dry-run, --since and --force are for manual runs only); returns the exit status instead of exiting mid-loop.
@@ -41,24 +42,32 @@ async function backfillJoinedOne(account, tenantId, argv, sessionRoutes) {
   return printOutcome(joinedOutcome(result, { dryRun: options.dryRun, complete }));
 }
 
-// One or unknown workspaces: one headerless run.
+// One or unknown workspaces: one headerless run; returns its exit status.
 async function backfillSingle(account, row, argv) {
   // Already sealed (and not forced): the same test runAudit uses, identity included, so a mismatch still plans the exclusions.
   const tracking = readTrackingState(row.key);
   const sealed = tracking != null && tracking.backfillCompleted === true && matchesIdentity(tracking, row.clientId == null ? null : row.clientId) && !parseArgs(argv).force;
   if (usesRules(row) && !sealed) {
     const { excludedSessionIds } = planHistoryRuns(row).runs[0];
-    if (await backfillOne(account, null, argv, null, excludedSessionIds, describeAccount(row)) !== 0) process.exit(1);
-  } else if (await backfillOne(account, null, argv, null) !== 0) process.exit(1);
+    return backfillOne(account, null, argv, null, excludedSessionIds, describeAccount(row));
+  }
+  return backfillOne(account, null, argv, null);
 }
 
-export async function runBackfill(args) {
+// After the uploads (never on --dry-run): the worker takes any workspace still owed its past sessions, then a failed run exits 1.
+async function finish(account, argv, status, deps) {
+  const start = deps.startHistoryWorker == null ? startHistoryWorker : deps.startHistoryWorker;
+  if (!parseArgs(argv).dryRun) await start(account);
+  if (status !== 0) process.exit(status);
+}
+
+export async function runBackfill(args, deps = {}) {
   const { account, rest } = await parseAccountFlag(args);
   if (account == null) fail('Beezi: backfill needs --account <key|email|n>. /beezi-local-login passes it automatically.');
   const row = (await getAccount(account)) || { key: account };
   const { argv, tenantIds: override } = parseTenantFlags(rest, row);
   if (!isMultiTenant(row)) {
-    await backfillSingle(account, row, argv);
+    await finish(account, argv, await backfillSingle(account, row, argv), deps);
     return;
   }
   // --tenant is an override: those workspaces get every past session, unrouted.
@@ -85,5 +94,5 @@ export async function runBackfill(args) {
       status = 1;
     }
   });
-  if (status !== 0) process.exit(status);
+  await finish(account, argv, status, deps);
 }

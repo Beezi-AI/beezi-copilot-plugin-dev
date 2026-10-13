@@ -31,6 +31,7 @@ import { announceRepo, checkIn, deadlineTimer, localMaintenance } from '../pipel
 import { readUsageHold } from '../pipeline/usage-hold.mjs';
 import { healthSummary } from '../state/health-record.mjs';
 import { spawnDetached } from '../platform/spawn.mjs';
+import { maybeStartPendingHistory } from '../history/pending-trigger.mjs';
 import { scriptPath } from '../config/plugin-root.mjs';
 import { deliveryNotice, USAGE_HOLD_NOTICE } from '../ux/capture-health.mjs';
 import {
@@ -106,6 +107,8 @@ async function accountNotices(run) {
   // Sessions left behind their file or owing a shutdown are checkpointed by a detached worker, never inside this hook. Spawned
   // before any network wait, so a run cut off at its deadline still leaves it; the worker takes its own lock.
   spawnDetached(scriptPath('catch-up-worker.mjs'), { spawnImpl: run.deps.spawnImpl }, [input.session_id]);
+  // Retries history uploads that are due, one detached worker per account; it never throws.
+  await maybeStartPendingHistory({ spawnImpl: run.deps.spawnImpl });
   // Only this session's own choice scopes requests; the row's web-side tenantId never does.
   const workspaceState = readSessionWorkspace(input.session_id);
   const sessions = (await Promise.all(rows.map((row) => verifyAccount(row, run)))).filter(Boolean);

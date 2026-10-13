@@ -28,6 +28,23 @@ function readLineCount(value) {
   return { ok: true, lines: value };
 }
 
+// One batch's `held` table merged into `into`; null once any batch lacks a valid one (an older portal).
+function readHeld(table, batch, into) {
+  if (into == null || table == null || typeof table !== 'object' || Array.isArray(table)) return null;
+  for (const sessionId of batch) {
+    const read = readLineCount(table[sessionId]);
+    if (!read.ok) return null;
+    if (read.lines > 0) into.set(sessionId, read.lines);
+  }
+  return into;
+}
+
+// What the workspace holds of one session (0 = nothing), or null when the server did not say.
+export function heldLineOf(coverage, sessionId) {
+  if (coverage == null || !(coverage.held instanceof Map)) return null;
+  return coverage.held.has(sessionId) ? coverage.held.get(sessionId) : 0;
+}
+
 // Map<sessionId, storedPrefixLines> (absent = a confirmed 0) when every batch answered in the documented shape, else null.
 export async function fetchCoverage(sessionIds, session, deps = {}, { timeoutMs = COVERAGE_TIMEOUT_MS } = {}) {
   const ids = Array.isArray(sessionIds) ? sessionIds.filter((id) => typeof id === 'string' && id !== '') : [];
@@ -37,6 +54,7 @@ export async function fetchCoverage(sessionIds, session, deps = {}, { timeoutMs 
   const fetchImpl = deps.fetchImpl == null ? resolveFetch() : deps.fetchImpl;
   const url = `${apiBase()}${ENDPOINTS.sessionsCoverage}`;
 
+  let held = new Map();
   for (const batch of chunkIds([...new Set(ids)], MAX_COVERAGE_IDS)) {
     let res;
     try {
@@ -60,7 +78,9 @@ export async function fetchCoverage(sessionIds, session, deps = {}, { timeoutMs 
       if (!read.ok) return null;
       if (read.lines > 0) coverage.set(sessionId, read.lines);
     }
+    held = readHeld(parsed.held, batch, held);
   }
+  if (held != null) coverage.held = held;
   return coverage;
 }
 
@@ -83,6 +103,7 @@ export const DeferReason = Object.freeze({
 });
 
 // A REJECTED ledger entry is not delivery: pass ledgerDelivered false for it, so a once-unconnected repository replays in full.
+// facts.held is the server's highest stored line for this workspace (sync mode only); null when unknown.
 export function decideReplay(sessionId, facts = {}) {
   const coverage = facts.coverage instanceof Map ? facts.coverage : null;
   const checkpointLine = Number.isInteger(facts.checkpointLine) && facts.checkpointLine >= 0 ? facts.checkpointLine : null;
@@ -93,7 +114,11 @@ export function decideReplay(sessionId, facts = {}) {
     return { decision: ReplayDecision.DEFER, reason: DeferReason.UNAVAILABLE, startCursor: null, stored: null };
   }
   const stored = coverage.has(sessionId) ? coverage.get(sessionId) : 0;
+  const held = Number.isInteger(facts.held) && facts.held >= 0 ? facts.held : null;
   const gap = { decision: ReplayDecision.DEFER, reason: DeferReason.GAP, startCursor: null, stored };
+
+  // The server said what it holds: a clean prefix replays from its end whatever this machine sent to other workspaces.
+  if (held !== null) return held > stored ? gap : { decision: ReplayDecision.REPLAY, reason: null, startCursor: stored, stored };
 
   if (stored > 0) {
     // Either witness ahead of the server's prefix means lines above `stored` are not all free.

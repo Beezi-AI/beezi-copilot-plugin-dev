@@ -16,6 +16,20 @@ async function promptNotices(prompt, input) {
   return { workspacePrompt, targetsNotice, joinedNotice };
 }
 
+// The joined ask (built only when `asking`, so other sessions skip its credential reads) and the history notice,
+// each on its own so one failing never drops the other or the folder ask.
+async function joinedNotices(joined, input, asking) {
+  let joinedPrompt = null;
+  let historyNotice = null;
+  try {
+    if (joined != null && asking && input.source !== 'resume') joinedPrompt = await joined.buildJoinedPrompt(input);
+  } catch { /* asked again next session */ }
+  try {
+    if (joined != null) historyNotice = await joined.buildHistoryNotice(input);
+  } catch { /* shown next session */ }
+  return { joinedPrompt, historyNotice };
+}
+
 // Resolves to { additionalContext }; on a runSessionStart failure writes the workspace prompt through `write` and rethrows.
 // `deps.importHookModule` stands in for the runner's loader.
 export async function runSessionStartHook(input, { budgetMs, write }, deps = {}) {
@@ -33,16 +47,26 @@ export async function runSessionStartHook(input, { budgetMs, write }, deps = {})
     if (mod != null) notices = (await mod.runSessionStart(input, { budgetMs })).notices;
   } catch (error) { failure = error; }
   const { workspacePrompt, targetsNotice, joinedNotice } = await promptNotices(prompt, input);
-  if (targetsNotice != null && targetsNotice.context != null) notices.push({ text: targetsNotice.context, kind: 'targets', actionable: false });
-  if (targetsNotice != null && targetsNotice.notTracked != null) notices.push({ text: targetsNotice.notTracked, kind: 'not-tracked', actionable: true });
-  if (joinedNotice != null) notices.push({ text: joinedNotice.text, kind: 'joined', actionable: true });
-  const parts = workspacePrompt == null ? [] : [workspacePrompt];
   // A -p or autopilot run must stay clean: nobody is there to read a relayed line.
   const attendance = await importHookModule(new URL('../host/attendance.mjs', import.meta.url).href);
-  const attended = attendance == null || !attendance.unattendedStatus({ input, sessionId: input.session_id }).unattended;
+  const status = attendance == null ? null : attendance.unattendedStatus({ input, sessionId: input.session_id });
+  const attended = status == null || !status.unattended;
+  // Only a session known to have ask_user is asked; with no signal the joined line is relayed instead.
+  const asking = status != null && status.signal === attendance.UnattendedSignal.ATTENDED;
+  const joined = await importHookModule(new URL('../ux/joined-prompt.mjs', import.meta.url).href);
+  const { joinedPrompt, historyNotice } = await joinedNotices(joined, input, asking);
+  const parts = [];
+  // The joined re-pick comes first, so the current-folder question sees its answers.
+  if (joinedPrompt != null) parts.push(joinedPrompt);
+  else if (joinedNotice != null) notices.push({ text: joinedNotice.text, kind: 'joined', actionable: true });
+  if (workspacePrompt != null) parts.push(workspacePrompt);
+  if (targetsNotice != null && targetsNotice.context != null) notices.push({ text: targetsNotice.context, kind: 'targets', actionable: false });
+  if (targetsNotice != null && targetsNotice.notTracked != null) notices.push({ text: targetsNotice.notTracked, kind: 'not-tracked', actionable: true });
+  if (historyNotice != null) notices.push({ text: historyNotice.text, kind: 'history', actionable: true });
   const line = attended ? relayLine(notices) : null;
   // Marked announced only once this notice is the one relayed, so a higher-priority notice doesn't swallow it.
   if (joinedNotice != null && line === joinedNotice.text && failure == null) await joinedNotice.mark();
+  if (historyNotice != null && line === historyNotice.text && failure == null) await historyNotice.mark();
   if (line != null) parts.push(relayInstruction(line));
   const result = { additionalContext: parts.length === 0 ? null : parts.join('\n\n') };
   // A failure after the workspace prompt was built still writes the prompt.

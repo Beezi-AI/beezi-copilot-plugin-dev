@@ -33,7 +33,7 @@ import { resolveFetch } from '../platform/compat-fetch.mjs';
 import { whoami as _whoami } from '../auth/whoami.mjs';
 import { readTrackingState, isLiveTrackingAllowed, isTenantDark, markBackfillCompleted, recordWhoami } from '../state/tracking.mjs';
 import { AUDIT_TIMEOUT_MS, BackfillHalt, SYNC_MODE } from '../contract/history.mjs';
-import { newResult, countOf, addCounters, classifyReplay } from './run-result.mjs';
+import { newResult, countOf, addCounters, classifyReplay, isCleanSync } from './run-result.mjs';
 import { shouldFinalize } from './seal-policy.mjs';
 import { runPreamble } from './preamble.mjs';
 import { attemptHead, cwdReader, proveStartLines, selectCandidates, usableEntries, withVscodeEntries } from './candidates.mjs';
@@ -77,7 +77,7 @@ export function planHistoryRuns(row, { markWaiting = false, onlySessionIds = nul
   return { scanned: entries.length, counts, runs: tenantIds.map((tenantId) => ({ tenantId, sessionRoutes: routes })) };
 }
 
-// Backfill uploads every past session then seals the one-time pull; sync replays only what coverage says is missing and never seals.
+// Backfill uploads every past session then seals the one-time pull; sync replays only what coverage says is missing and never seals, though a clean one marks the workspace's history settled.
 export async function runAudit(deps = {}, options = {}) {
   // One leased lock for backfill, sync and the watcher's history pass, renewed as the run proceeds.
   const lease = acquireLease('history', { leaseMs: HISTORY_LEASE_MS });
@@ -144,6 +144,7 @@ async function runAuditLeased(lease, deps, options) {
 
   if (candidates.length === 0) {
     result.ok = true;
+    settleSyncLedger(run);
     // A previous run delivered everything but its finalize POST was lost: retry the seal here, or the pull stays open forever.
     await finalize(run);
     return result;
@@ -158,8 +159,18 @@ async function runAuditLeased(lease, deps, options) {
   result.ok = true;
   // A run whose lease was taken away reports what it delivered and stops; it must not seal.
   if (result.halt === BackfillHalt.LOCK_LOST) return result;
+  settleSyncLedger(run);
   await finalize(run);
   return result;
+}
+
+// A clean sync covered this workspace's history, so the watcher may keep it current from now on.
+function settleSyncLedger(run) {
+  const { result } = run;
+  if (!run.syncMode || run.dryRun || !isCleanSync(result)) return;
+  if (run.ledger == null || typeof run.ledger.historySettledAt === 'string') return;
+  run.ledger.historySettledAt = new Date(run.io.now()).toISOString();
+  try { run.io.saveLedger(run.key, run.ledger, run.ledgerTenant); } catch { /* best-effort */ }
 }
 
 async function finalize(run) {

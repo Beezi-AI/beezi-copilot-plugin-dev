@@ -94,6 +94,7 @@ the same text in `hookSpecificOutput.additionalContext` for VS Code.
 | Event | Script | Work |
 |---|---|---|
 | `SessionStart` | `session-start.mjs` | link check, notices, workspace question, queue flush, prune, billing reconcile, account check-in, update check |
+| `SessionStart` (detached) | `history-worker.mjs` | sends past sessions to a workspace that a rule or the New folders default newly reaches; rule changes, `/beezi-sync`, the login upload and the watcher start it too |
 | `SessionStart` (detached) | `catch-up-worker.mjs` | checkpoints up to 3 recent sessions whose file grew past what was reported or whose final shutdown is still owed; one per machine at a time |
 | `UserPromptSubmit` | `track-prompt.mjs` | records the interaction mode; asks for a background quota refresh when one is due |
 | `PostToolUse` (shell) | `checkpoint.mjs` | checkpoint after `git commit`, `switch`, `checkout`, `merge`, `rebase` or `pull` (also with `-C <dir>`) and `gh pr checkout` |
@@ -152,8 +153,11 @@ file that changed it does one of three things:
 - **Active session it has not seen before:** it establishes a start line from what Beezi already
   holds (the same rule `/beezi-sync` uses) and then checkpoints. Every hook-less Agent Host session
   lands here.
-- **Idle session it has not seen before:** it counts as history and goes through the sync path, and
-  only after the login import has finished. The watcher never performs the one-time import.
+- **Idle session it has not seen before:** it counts as history and goes through the sync path, for
+  each workspace only once that workspace's past sessions were sent: the login import finished, or a
+  `/beezi-sync` or history-worker run covered it. The watcher never performs the one-time import.
+  When a workspace still owes its past sessions, the watcher starts the history worker for it (see
+  [Accounts and workspace routing](#accounts-and-workspace-routing)) instead of uploading them itself.
 
 Files over 64 MB are skipped and logged once. Once every 6 hours the elected watcher also runs the
 housekeeping that `SessionStart` runs (prune, billing reconcile, account check-in, queue flush), so
@@ -336,6 +340,11 @@ An account that belongs to several Beezi workspaces chooses where each repo or f
 analytics: **rules** for specific repos and folders, and a **New folders** default for the rest
 (ask once, send to chosen workspaces, or don't send). `/beezi-settings` shows and changes both.
 Analytics held for an unanswered question wait on disk and are sent once you answer.
+
+When a rule or the New folders default starts sending to a workspace it did not reach before, a
+detached history worker (`history-worker.mjs`) sends that workspace this machine's past sessions,
+skipping what it already holds. If it cannot finish, the next session start or the watcher tries
+again. A later session start tells you in one line how it went.
 
 ## Data root
 

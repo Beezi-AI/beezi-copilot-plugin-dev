@@ -8,7 +8,7 @@ import { isUsableSessionId } from '../core/session-id.mjs';
 import { loadSessionState } from '../state/session-state.mjs';
 import { isImported, ledgerDelivered } from '../state/ledger.mjs';
 import { checkpointLineFor } from '../state/coverage-record.mjs';
-import { decideReplay, ReplayDecision, DeferReason } from '../delivery/coverage.mjs';
+import { decideReplay, heldLineOf, ReplayDecision, DeferReason } from '../delivery/coverage.mjs';
 import { linkedAtMs, TrackingMode } from '../state/tracking.mjs';
 import { ACTIVE_SESSION_WINDOW_MS } from './scan-limits.mjs';
 import { MAX_TRANSCRIPT_BYTES } from '../contract/report-limits.mjs';
@@ -94,15 +94,27 @@ function vscodeLiveSince(sessionId, cutoffMs) {
 
 const emptyCounts = () => ({ live: 0, routedElsewhere: 0, routeDeferred: 0, active: 0, liveTracked: 0, excluded: 0, alreadyImported: 0, oversize: 0 });
 
-// → { candidates, counts, settledIds }; `facts.isLiveVscode(id)` and `facts.localCursor(entry)` are asked lazily, in filter order.
+// Sessions skipped for being open or just touched: the history worker waits for the ones older than its request.
+function noteRecent(recent, entry) {
+  if (typeof entry.transcriptPath === 'string') recent.push({ sessionId: entry.sessionId, path: entry.transcriptPath });
+}
+
+// → { candidates, counts, settledIds, recent }; `facts.isLiveVscode(id)` and `facts.localCursor(entry)` are asked lazily, in filter order.
 export function filterCandidates(entries, facts) {
   const counts = emptyCounts();
   const settledIds = [];
   const candidates = [];
+  const recent = [];
   const { liveId, sessionRoutes, tenantId, linkCutoffMs, activeCutoffMs, syncMode, liveMode, excludedSessionIds } = facts;
+  // The live skip runs before the route filter, so it notes only a session whose route reaches this workspace.
+  const routedHere = (id) => sessionRoutes == null || (sessionRoutes.get(id) != null && sessionRoutes.get(id).tenantIds.indexOf(tenantId) !== -1);
   for (const entry of entries) {
     const id = entry.sessionId;
-    if (liveId != null && id === liveId) { counts.live += 1; continue; }
+    if (liveId != null && id === liveId) {
+      counts.live += 1;
+      if (routedHere(id)) noteRecent(recent, entry);
+      continue;
+    }
     // Filtered before the ledger, so a later rule can still send it here.
     if (sessionRoutes != null) {
       const route = sessionRoutes.get(id);
@@ -114,7 +126,7 @@ export function filterCandidates(entries, facts) {
       }
     }
     // An open VS Code session with no recent live checkpoint is processed here: its settled requests upload, the running one waits.
-    if (entry.mtimeMs > activeCutoffMs && (entry.kind !== 'vscode' || facts.isLiveVscode(id))) { counts.active += 1; continue; }
+    if (entry.mtimeMs > activeCutoffMs && (entry.kind !== 'vscode' || facts.isLiveVscode(id))) { counts.active += 1; noteRecent(recent, entry); continue; }
     if (linkCutoffMs != null && entry.mtimeMs >= linkCutoffMs) { counts.liveTracked += 1; continue; }
     // Without a link stamp, a live cursor is the remaining evidence that live tracking already owns the session.
     if (!syncMode && liveMode && linkCutoffMs == null && facts.localCursor(entry) > 0) { counts.liveTracked += 1; continue; }
@@ -125,7 +137,7 @@ export function filterCandidates(entries, facts) {
     if (entry.size > MAX_TRANSCRIPT_BYTES) { counts.oversize += 1; settledIds.push(id); continue; }
     candidates.push(entry);
   }
-  return { candidates, counts, settledIds };
+  return { candidates, counts, settledIds, recent };
 }
 
 // The candidates stage: list, skip the live, active, routed-away, excluded, imported and oversize sessions, count each.
@@ -159,6 +171,7 @@ export async function selectCandidates(run) {
   });
   for (const name of Object.keys(picked.counts)) result[name] += picked.counts[name];
   result.settledIds.push(...picked.settledIds);
+  result.recent.push(...picked.recent);
   return picked.candidates;
 }
 
@@ -186,6 +199,7 @@ export async function proveStartLines(run, candidates) {
       checkpointLine: checkpointLineFor(run.coverageRecord, entry.sessionId),
       localCursor: localCursorOf(entry),
       ledgerDelivered: ledgerDelivered(run.ledger, entry.sessionId),
+      held: run.syncMode ? heldLineOf(coverage, entry.sessionId) : null,
     });
     if (verdict.decision === ReplayDecision.DEFER) {
       result.deferred += 1;

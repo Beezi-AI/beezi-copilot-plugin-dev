@@ -24,7 +24,7 @@ import {
 } from '../../ux/workspace-lines.mjs';
 import { machineLine } from '../../ux/machine-lines.mjs';
 import {
-  USAGE, choiceDir, mayPersist, pastSessionOptions, parseSessionFlag, requireKnownWorkspaces, requireMulti, requireNoneForSingle,
+  USAGE, afterRuleWrite, choiceDir, mayPersist, pastSessionOptions, parseSessionFlag, requireKnownWorkspaces, requireMulti, requireNoneForSingle,
   resolveAccount, resolveSession, selectedRows, selection,
 } from './args.mjs';
 import { displayPath, plural } from '../../core/text.mjs';
@@ -172,7 +172,7 @@ function parseRuleTarget(rest) {
   return { target, refs };
 }
 
-async function ruleAdd(argv) {
+async function ruleAdd(argv, cx = { deferUpload: false }) {
   const { session, rest: afterSession } = parseSessionFlag(argv);
   const { account, rest } = await parseAccountFlag(afterSession);
   const { target, refs } = parseRuleTarget(rest);
@@ -187,10 +187,11 @@ async function ruleAdd(argv) {
   const n = (await setWorkspaceRule(row.key, { kind: key.kind, match: key.match, label: key.label, tenantIds })).index;
   console.log(ruleDone(row, key, tenantIds, false));
   await bindOpenSessions(await resolveAccount(row.key), [n], current, ctx);
+  await afterRuleWrite(row.key, cx, cx.deps);
   console.log(machineLine([['rule', n]]));
 }
 
-async function ruleSet(argv) {
+async function ruleSet(argv, cx = { deferUpload: false }) {
   const { session, rest: afterSession } = parseSessionFlag(argv);
   const { account, rest } = await parseAccountFlag(afterSession);
   if (rest.length < 2) throw new UserError(USAGE);
@@ -204,10 +205,11 @@ async function ruleSet(argv) {
   await setWorkspaceRule(row.key, { kind: found.kind, match: found.match, label: found.label, tenantIds });
   console.log(ruleDone(row, found, tenantIds, true));
   await bindOpenSessions(await resolveAccount(row.key), [found.index], current, createRouteContext());
+  await afterRuleWrite(row.key, cx, cx.deps);
   console.log(machineLine([['rule', found.index]]));
 }
 
-async function ruleRemove(argv) {
+async function ruleRemove(argv, cx = { deferUpload: false }) {
   const { account, rest } = await parseAccountFlag(argv);
   if (rest.length !== 1) throw new UserError(USAGE);
   const row = await resolveAccount(account);
@@ -218,6 +220,7 @@ async function ruleRemove(argv) {
   } else {
     console.log(`✓ Removed the rule for ${placeOf(removed)}. New sessions there follow New folders (${newFoldersLabel(row)}).`);
   }
+  await afterRuleWrite(row.key, cx, cx.deps);
   console.log(machineLine([['removed', removed.index]]));
   // Sessions bound to the removed rule keep their state until something re-binds them: re-route each to whatever still applies.
   if (isSingleTenant(row)) {
@@ -232,7 +235,7 @@ async function ruleRemove(argv) {
 }
 
 // One rule per repo or folder that `routes` lists, all sending to the same workspaces.
-async function ruleAddAll(argv) {
+async function ruleAddAll(argv, cx = { deferUpload: false }) {
   const { session, rest: afterSession } = parseSessionFlag(argv);
   const { account, rest } = await parseAccountFlag(afterSession);
   if (rest.length === 0) throw new UserError(USAGE);
@@ -256,15 +259,16 @@ async function ruleAddAll(argv) {
     console.log(`✓ Added ${plural(n, 'rule')}: ${where}.`);
     await bindOpenSessions(await resolveAccount(row.key), added, current, ctx);
   }
+  await afterRuleWrite(row.key, cx, cx.deps);
   console.log(machineLine([['rules-added', n]]));
 }
 
-export async function rule(argv) {
+export async function rule(argv, cx = { deferUpload: false }) {
   const [sub, ...rest] = argv;
-  if (sub === 'add') { await ruleAdd(rest); return; }
-  if (sub === 'set') { await ruleSet(rest); return; }
-  if (sub === 'remove') { await ruleRemove(rest); return; }
-  if (sub === 'add-all') { await ruleAddAll(rest); return; }
+  if (sub === 'add') { await ruleAdd(rest, cx); return; }
+  if (sub === 'set') { await ruleSet(rest, cx); return; }
+  if (sub === 'remove') { await ruleRemove(rest, cx); return; }
+  if (sub === 'add-all') { await ruleAddAll(rest, cx); return; }
   throw new UserError(USAGE);
 }
 

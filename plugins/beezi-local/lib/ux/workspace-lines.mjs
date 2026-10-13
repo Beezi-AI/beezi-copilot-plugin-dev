@@ -65,9 +65,14 @@ export function commandLine(name, args) {
   return machineLine([[name, `node "${pluginRoot()}/scripts/workspace.mjs" ${args}`]]);
 }
 
+// ` --defer-upload` for a printed command whose caller uploads next, else nothing; it goes right after `--account <key>`.
+export function deferSuffix(defer) {
+  return defer ? ' --defer-upload' : '';
+}
+
 // The command that answers one place with a rule.
-export function ruleAddCommandLine(name, place, row) {
-  return commandLine(name, `rule add ${ruleTargetFlag(place)} --account ${row.key} <tenants>`);
+export function ruleAddCommandLine(name, place, row, defer = false) {
+  return commandLine(name, `rule add ${ruleTargetFlag(place)} --account ${row.key}${deferSuffix(defer)} <tenants>`);
 }
 
 // The workspaces to offer, one line each; with `newIds`, new= says which were just joined. role= is last and may be empty.

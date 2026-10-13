@@ -40,7 +40,7 @@ questions are skipped (as for the rest of Step 1).
 First, new workspaces. Run EXACTLY (for you only; add `--account <key>` when the user named an
 account):
 
-`node "<plugin-root>/scripts/workspace.mjs" joined`
+`node "<plugin-root>/scripts/workspace.mjs" joined --defer-upload`
 
 Lines:
 - `<email>: you joined <names> — <N> repos or folders to review account=<key> new=<ids>` starts the
@@ -57,10 +57,12 @@ Lines:
 
 `joined=0` → go to "Then, repos and folders with no rule".
 
-Per account with `J` lines (with several accounts, end each question with " (<email>)"):
+Run the printed commands unchanged; whatever they route gets its history uploaded.
+
+Per account with `J` lines (with several accounts, add " (<email>)" right after each question's "go?"):
 
 More than 4 `J` lines → first ask "You joined <names>. Where should analytics for these <N> repos and
-folders go?" (`<N>` = that account's number of `J` lines) with:
+folders go? Their past sessions will be sent there too." (`<N>` = that account's number of `J` lines) with:
 - "Add <names> to all <N> — repos you don't track, and ones with no rule yet, stay as they are";
 - "Choose per repo — one question per repo or folder";
 - "Leave them as they are — nothing changes, and you're not asked about <names> again".
@@ -73,12 +75,12 @@ The per-repo question (per `J` line, numbered `(i of N)` across that account's `
 number; several allowed). This question counter restarts for each account; the printed `J` numbers are
 global across accounts. Preserve each printed `J` number to match its command; never use the question
 counter to look up a `J<i>-command`. `<where>` is the text after `now: ` up to ` account=`.
-- For `kind=repo`: "(i of N) Now: <where>. Where should analytics for <short> go?", ending with
-  "Don't track this repo".
+- For `kind=repo`: "(i of N) Now: <where>. Where should analytics for <short> go? Their past sessions will be sent there too.", ending
+  with "Don't track this repo".
 - For `kind=folder`: "(i of N) Now: <where>. Where should analytics for <label> (and everything inside
-  it) go?", ending with "Don't track this folder".
+  it) go? Their past sessions will be sent there too.", ending with "Don't track this folder".
 - For `kind=outside`: "(i of N) Now: <where>. Where should analytics for sessions outside a project
-  folder go?", ending with "Don't track these".
+  folder go? Their past sessions will be sent there too.", ending with "Don't track these".
 
 Choices: one per `W.` line (name — role, or "Beezi workspace"; add ", new" for `new=yes`), then that
 last choice.
@@ -91,7 +93,7 @@ been answered (not skipped or dismissed), run the `done-command=` text EXACTLY O
 Write each command's first line verbatim.
 
 Then, repos and folders with no rule. Run EXACTLY (add `--account <key>` when the user named an
-account): `node "<plugin-root>/scripts/workspace.mjs" routes`. Its output is for you only, except the
+account): `node "<plugin-root>/scripts/workspace.mjs" routes --defer-upload`. Its output is for you only, except the
 one line named below. For each account in several workspaces set to "Ask me", it prints a block:
 `<email>: <N repos or folders have | 1 repo or folder has> past sessions with no rule (<M> sessions) account=<key>`; `W.`
 lines (one per workspace: `W. <workspace> account=<key> tenant=<id> role=<role>`); `P<i>. <short>
