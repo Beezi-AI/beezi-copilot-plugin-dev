@@ -78,7 +78,7 @@ output and STOP.
 
 Step 1w — new folders. Run EXACTLY (for you only; do not show it):
 
-`node "<plugin-root>/scripts/workspace.mjs" new-folders --account <key>`
+`node "<plugin-root>/scripts/workspace.mjs" new-folders --account <key> --defer-upload`
 
 Its last line is `new-folders=<ask|send|none> set=<yes|no> multi=yes account=<key>` for an account in
 several workspaces, or `new-folders=n/a multi=no account=<key>`. Lines before it include
@@ -88,13 +88,13 @@ Only when the last line contains `set=no`, ask "Where should analytics go for re
 no rule yet?" with the choices "Ask me (recommended) — Beezi asks once per repo or folder, when a
 session starts there", "Send to… — pick the workspaces that get them", "Don't send — nothing from a
 repo or folder with no rule is uploaded".
-- "Ask me" → run EXACTLY `node "<plugin-root>/scripts/workspace.mjs" new-folders ask --account <key>`
-- "Don't send" → run EXACTLY `node "<plugin-root>/scripts/workspace.mjs" new-folders none --account <key>`
+- "Ask me" → run EXACTLY `node "<plugin-root>/scripts/workspace.mjs" new-folders ask --account <key> --defer-upload`
+- "Don't send" → run EXACTLY `node "<plugin-root>/scripts/workspace.mjs" new-folders none --account <key> --defer-upload`
 - "Send to…" → ask "Which workspaces should get analytics for repos and folders with no rule?" (several
   allowed), one choice per `W.` line: the workspace name (text after `W. ` up to ` account=`) — its
   `role=` value, or "Beezi workspace" when empty. Then run EXACTLY, with the chosen lines' `tenant=`
   values joined by commas (the template already single-quotes them, so PowerShell keeps them one argument):
-  `node "<plugin-root>/scripts/workspace.mjs" new-folders send '<ids>' --account <key>`
+  `node "<plugin-root>/scripts/workspace.mjs" new-folders send '<ids>' --account <key> --defer-upload`
 
 Write the command's first line verbatim.
 
@@ -107,7 +107,7 @@ Its `here:` line is `here: <short> (<label>) → <R<n> | no rule> account=<key> 
 Only when it has `rule=none`, ask the workspace question for it (see Step 5a) and run EXACTLY, with
 `<ids>` = the chosen `tenant=` values joined by commas, or `none` when the last choice was picked:
 
-`node "<plugin-root>/scripts/workspace.mjs" rule add --current --account <key> '<ids>'`
+`node "<plugin-root>/scripts/workspace.mjs" rule add --current --account <key> --defer-upload '<ids>'`
 
 and write its first line verbatim. Steps 2–4 pick their workspaces themselves; pass no `--tenant`.
 
@@ -162,7 +162,7 @@ new-workspace questions and run nothing for them.
 
 First, new workspaces. Run EXACTLY (for you only):
 
-`node "<plugin-root>/scripts/workspace.mjs" joined --account <key>`
+`node "<plugin-root>/scripts/workspace.mjs" joined --account <key> --defer-upload`
 
 Lines:
 - `<email>: you joined <names> — <N> repos or folders to review account=<key> new=<ids>` starts the
@@ -180,7 +180,7 @@ Lines:
 `joined=0` → go to "Then, repos and folders with no rule".
 
 More than 4 `J` lines → first ask "You joined <names>. Where should analytics for these <N> repos and
-folders go?" with:
+folders go? Their past sessions will be sent there too." with:
 - "Add <names> to all <N> — repos you don't track, and ones with no rule yet, stay as they are";
 - "Choose per repo — one question per repo or folder";
 - "Leave them as they are — nothing changes, and you're not asked about <names> again".
@@ -191,12 +191,12 @@ the next login or /beezi-dev-sync asks again.
 
 The per-repo question (per `J` line, numbered `(i of N)`; several allowed). `<where>` is the text after
 `now: ` up to ` account=`.
-- For `kind=repo`: "(i of N) Now: <where>. Where should analytics for <short> go?", ending with
-  "Don't track this repo".
+- For `kind=repo`: "(i of N) Now: <where>. Where should analytics for <short> go? Their past sessions will be sent there too.", ending
+  with "Don't track this repo".
 - For `kind=folder`: "(i of N) Now: <where>. Where should analytics for <label> (and everything inside
-  it) go?", ending with "Don't track this folder".
+  it) go? Their past sessions will be sent there too.", ending with "Don't track this folder".
 - For `kind=outside`: "(i of N) Now: <where>. Where should analytics for sessions outside a project
-  folder go?", ending with "Don't track these".
+  folder go? Their past sessions will be sent there too.", ending with "Don't track these".
 
 Choices: one per `W.` line (name — role, or "Beezi workspace"; add ", new" for `new=yes`), then that
 last choice.
@@ -210,7 +210,7 @@ Write each command's first line verbatim.
 
 Then, repos and folders with no rule. Run EXACTLY (for you only, except the line named below):
 
-`node "<plugin-root>/scripts/workspace.mjs" routes --account <key>`
+`node "<plugin-root>/scripts/workspace.mjs" routes --account <key> --defer-upload`
 
 Lines: `W.` lines as in Step 1w; `P<i>. <short> (<label>), <k> sessions account=<key> kind=<repo|folder|outside> match=<…>`
 (one repo or folder; `P<i>. outside a project, …` is every past session in the home folder, `/`, a

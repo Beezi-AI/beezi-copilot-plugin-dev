@@ -6,6 +6,7 @@ import { describeAccount } from '../../accounts/refs.mjs';
 import { parseTenantFlags } from '../tenant-flags.mjs';
 import { isMultiTenant } from '../../workspace/tenants.mjs';
 import { excludedLine, routeSummary, syncOutcome } from '../../ux/history-messages.mjs';
+import { startHistoryWorker } from '../../history/pending-trigger.mjs';
 import { fail, forEachRun, printOutcome, runHistory } from './run-history.mjs';
 
 // --account/--tenant only scope a sync; --since would hide half-uploaded old sessions and --force has no seal to force past.
@@ -55,7 +56,7 @@ async function syncAccount(row, rest, several) {
   await forEachRun(row, plan.runs, (run) => syncOne(row.key, run.tenantId, run.sessionRoutes));
 }
 
-export async function runSync(argv) {
+export async function runSync(argv, deps = {}) {
   refuseFlags(argv);
   const { account, rest } = await parseAccountFlag(argv);
   const rows = account != null
@@ -66,4 +67,7 @@ export async function runSync(argv) {
     fail('Beezi: --tenant needs --account <key> when several accounts are linked.');
   }
   for (const row of rows) await syncAccount(row, rest, rows.length > 1);
+  // After the uploads: the worker takes any workspace still owed its past sessions (a --defer-upload rule left its marker).
+  const start = deps.startHistoryWorker == null ? startHistoryWorker : deps.startHistoryWorker;
+  for (const row of rows) await start(row.key);
 }
