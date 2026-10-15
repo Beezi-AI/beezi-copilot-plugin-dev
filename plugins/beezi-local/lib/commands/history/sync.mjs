@@ -1,5 +1,6 @@
 // sync.mjs (/beezi-local-sync): repeatable upload of what Beezi is missing, per linked account and routed workspace.
 import { planHistoryRuns } from '../../history/history-run.mjs';
+import { createRunCache } from '../../history/run-cache.mjs';
 import { SYNC_MODE } from '../../contract/history.mjs';
 import { parseAccountFlag, listAccounts, getAccount, AccountStatus } from '../../accounts/index-store.mjs';
 import { describeAccount } from '../../accounts/refs.mjs';
@@ -26,24 +27,26 @@ function refuseFlags(argv) {
 }
 
 // One account/workspace run; a refusal marks the exit code and returns, so the runs after it still go.
-async function syncOne(account, tenantId, sessionRoutes, excludedSessionIds = null, excludedLabel = null) {
-  const result = await runHistory({ account, tenantId, sessionRoutes, excludedSessionIds, mode: SYNC_MODE });
+async function syncOne(runCache, account, tenantId, sessionRoutes, excludedSessionIds = null, excludedLabel = null) {
+  const result = await runHistory({ account, tenantId, sessionRoutes, excludedSessionIds, mode: SYNC_MODE }, runCache);
   if (excludedLabel != null && result.excluded > 0) console.log(excludedLine(excludedLabel, result.excluded));
   if (printOutcome(syncOutcome(result)) !== 0) process.exitCode = 1;
 }
 
 // One account: a single headerless run, the --tenant override, or one run per routed workspace.
-async function syncAccount(row, rest, several) {
+async function syncAccount(row, rest, several, deps) {
   const override = parseTenantFlags(rest, row).tenantIds;
+  // One git cache for every workspace's run of this account, so each session's git correlation runs once.
+  const runCache = (deps.createRunCache == null ? createRunCache : deps.createRunCache)();
   if (!isMultiTenant(row)) {
     if (several) console.log(`\n— ${describeAccount(row)} —`);
     const { excludedSessionIds } = planHistoryRuns(row).runs[0];
-    await syncOne(row.key, null, null, excludedSessionIds, excludedSessionIds == null ? null : describeAccount(row));
+    await syncOne(runCache, row.key, null, null, excludedSessionIds, excludedSessionIds == null ? null : describeAccount(row));
     return;
   }
   // --tenant is an override: those workspaces get every past session, unrouted.
   if (override.length > 0) {
-    await forEachRun(row, override.map((tenantId) => ({ tenantId })), (run) => syncOne(row.key, run.tenantId, null));
+    await forEachRun(row, override.map((tenantId) => ({ tenantId })), (run) => syncOne(runCache, row.key, run.tenantId, null));
     return;
   }
   const plan = planHistoryRuns(row);
@@ -53,7 +56,7 @@ async function syncAccount(row, rest, several) {
   }
   const summary = routeSummary(row, plan);
   if (summary != null) console.log(`\n${summary}`);
-  await forEachRun(row, plan.runs, (run) => syncOne(row.key, run.tenantId, run.sessionRoutes));
+  await forEachRun(row, plan.runs, (run) => syncOne(runCache, row.key, run.tenantId, run.sessionRoutes));
 }
 
 export async function runSync(argv, deps = {}) {
@@ -66,7 +69,7 @@ export async function runSync(argv, deps = {}) {
   if (rows.length > 1 && rest.indexOf('--tenant') !== -1) {
     fail('Beezi: --tenant needs --account <key> when several accounts are linked.');
   }
-  for (const row of rows) await syncAccount(row, rest, rows.length > 1);
+  for (const row of rows) await syncAccount(row, rest, rows.length > 1, deps);
   // After the uploads: the worker takes any workspace still owed its past sessions (a --defer-upload rule left its marker).
   const start = deps.startHistoryWorker == null ? startHistoryWorker : deps.startHistoryWorker;
   for (const row of rows) await start(row.key);

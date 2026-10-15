@@ -41,6 +41,8 @@ import { registerAccount } from './registration.mjs';
 import { stampHistoryReports } from './identity-apply.mjs';
 import { readSessionFacts } from './session-facts.mjs';
 import { createBatchQueue, loseLease, progress, renewLease, sealLocally } from './batch-dispatch.mjs';
+import { createRenewal } from './token-renewal.mjs';
+import { createRunCache } from './run-cache.mjs';
 
 export const HISTORY_LEASE_MS = 10 * 60 * 1000;
 
@@ -133,6 +135,10 @@ async function runAuditLeased(lease, deps, options) {
   const run = { lease, deps, options, io: resolveIo(deps), result: newResult(), syncMode: options.mode === SYNC_MODE, dryRun: options.dryRun === true };
   const { result } = run;
   if (!(await runPreamble(run))) return result;
+  run.renewSession = createRenewal(run);
+  // One per run, shared by every flush: the first proxy refusal of gzip turns it off for the rest of the run.
+  run.compression = { enabled: true };
+  run.runCache = deps.runCache == null ? createRunCache() : deps.runCache;
 
   let candidates = await selectCandidates(run);
   // The coverage record is kept in BOTH modes: an accepted backfill writes its checkpoint too, which later saves a sync from the usage-mode deferral.
@@ -200,17 +206,22 @@ async function replayCandidates(run, candidates, startCursors) {
   run.followups = new Map();
   run.unreadableDirty = false;
   const queue = createBatchQueue(run);
-  for (const entry of candidates) {
-    if (run.halted) break;
-    await yieldToLoop();
-    // A long run of already-current sessions can go a while without a dispatch; renew so the lease never expires while alive.
-    if (run.io.now() - run.lastRenewAt >= LEASE_RENEW_EVERY_MS) {
-      if (!renewLease(run)) { loseLease(run); break; }
-      progress(run);
+  try {
+    for (const entry of candidates) {
+      if (run.halted) break;
+      await yieldToLoop();
+      // A long run of already-current sessions can go a while without a dispatch; renew so the lease never expires while alive.
+      if (run.io.now() - run.lastRenewAt >= LEASE_RENEW_EVERY_MS) {
+        if (!renewLease(run)) { loseLease(run); break; }
+        progress(run);
+      }
+      // Pass startCursor every time: history must never depend on a hook's local cursor. Backfill always starts at line 0.
+      const group = await replayOne(run, entry, run.syncMode ? startCursors.get(entry.sessionId) : 0);
+      if (group != null) await queue.add(group);
     }
-    // Pass startCursor every time: history must never depend on a hook's local cursor. Backfill always starts at line 0.
-    const group = await replayOne(run, entry, run.syncMode ? startCursors.get(entry.sessionId) : 0);
-    if (group != null) await queue.add(group);
+  } finally {
+    // A throw from the loop itself still waits for every flight, so none writes after the lease is released.
+    await queue.settle();
   }
   await queue.drain();
 
@@ -278,7 +289,7 @@ function runEngine(run, entry, startCursor, reports) {
       withTimeline: false,
       withQuota: false,
     },
-    { fetchImpl: run.io.fetchImpl },
+    { fetchImpl: run.io.fetchImpl, runCache: run.runCache },
     {
       sessions: [run.session],
       sink: (payload) => reports.push(payload),

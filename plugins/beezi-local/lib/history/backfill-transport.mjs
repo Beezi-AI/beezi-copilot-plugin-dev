@@ -1,4 +1,4 @@
-// POSTs planned backfill chunks with token renewal, one in-run retry and halts, and seals the pull.
+// POSTs planned backfill chunks with token renewal, gzip with a plain fallback, one in-run retry and halts, and seals the pull.
 import { apiBase, ENDPOINTS } from '../config/api.mjs';
 import { isOriginMismatch, postJson } from '../platform/http.mjs';
 import { resolveFetch } from '../platform/compat-fetch.mjs';
@@ -6,7 +6,8 @@ import { getAccessToken as _getAccessToken } from '../auth/token.mjs';
 import { sleep as _sleep } from '../core/async.mjs';
 import { BackfillSessionStatus } from '../contract/history.mjs';
 import { planChunks, countSplitParts } from './chunk-planner.mjs';
-import { foldSessionVerdict, interpretChunkResponse, reauthFailure, transportFailure } from './chunk-verdicts.mjs';
+import { gzipJson } from '../platform/gzip-body.mjs';
+import { foldSessionVerdict, interpretChunkResponse, isCodedForbidden, reauthFailure, transportFailure } from './chunk-verdicts.mjs';
 
 // postJson's 3s default exists to protect the 10s hook budget. The audit is a foreground command
 // and the server ingests a chunk's reports sequentially, which is seconds to tens of seconds.
@@ -97,6 +98,13 @@ function createFlush(result, session, deps, options) {
     result,
     session,
     renewed: false,
+    renewSession: deps.renewSession == null ? null : deps.renewSession,
+    // Shared with the run's other flushes: a chunk goes out gzipped only while it is enabled.
+    compression: deps.compression == null ? null : deps.compression,
+    // Set before each attempt; true sends plain JSON whatever the shared flag says.
+    sendPlain: false,
+    // Whether the latest post went out gzipped; one flush posts strictly one request at a time.
+    lastPostCompressed: false,
     url: `${apiBase()}${endpointPath}`,
     postJsonImpl: deps.postJsonImpl == null ? postJson : deps.postJsonImpl,
     getAccessToken: deps.getAccessToken == null ? _getAccessToken : deps.getAccessToken,
@@ -106,9 +114,10 @@ function createFlush(result, session, deps, options) {
   };
 }
 
-// A 401 is authentication, not a verdict on the payload. Renew once for the whole run and retry;
+// A 401 is authentication, not a verdict on the payload. Renew once for the whole flush and retry;
 // if renewal fails, the remaining chunks count as failed and stay eligible for a re-run.
 async function renewToken(flush) {
+  if (flush.renewSession != null) return renewThroughRun(flush);
   if (flush.renewed) return null;
   flush.renewed = true;
   const next = await flush.getAccessToken({}, { account: flush.session.key, forceRefresh: true }).catch(() => null);
@@ -116,34 +125,58 @@ async function renewToken(flush) {
   return null;
 }
 
+// The run's shared single-flight renewal bounds refreshes itself, so no per-flush guard applies.
+async function renewThroughRun(flush) {
+  const next = await flush.renewSession(flush.session).catch(() => null);
+  if (next == null || next.token === flush.session.token) return null;
+  flush.session = next;
+  return next;
+}
+
 // `timelines` is omitted when empty so a chunk without them stays byte-identical to the wire
 // shape that predates it.
 function post(flush, chunk) {
   const body = { sessions: chunk.reports };
   if (chunk.timelines != null && chunk.timelines.length) body.timelines = chunk.timelines;
-  return flush.postJsonImpl(flush.url, flush.session, body, { fetchImpl: flush.fetchImpl, timeoutMs: flush.timeoutMs });
+  flush.lastPostCompressed = !flush.sendPlain && flush.compression != null && flush.compression.enabled === true;
+  const postDeps = { fetchImpl: flush.fetchImpl, timeoutMs: flush.timeoutMs };
+  if (flush.lastPostCompressed) postDeps.gzip = gzipJson;
+  return flush.postJsonImpl(flush.url, flush.session, body, postDeps);
 }
 
-async function postRenewing(flush, chunk) {
+// `state.renewedHere` caps a chunk at one run renewal across both attempts of postWithRetry.
+async function postRenewing(flush, chunk, state) {
   let attempt = await post(flush, chunk);
-  if (attempt.status === 401) {
+  if (attempt.status === 401 && !state.renewedHere) {
     const next = await renewToken(flush);
-    if (next) attempt = await post(flush, chunk);
+    if (next) {
+      state.renewedHere = flush.renewSession != null;
+      attempt = await post(flush, chunk);
+    }
   }
   return attempt;
 }
 
+// A gzipped attempt that failed in transit or drew a 5xx is retried plain, standing in for gzip.
+function fallBackIfCompressed(flush, state) {
+  if (!flush.lastPostCompressed) return;
+  state.plain = true;
+  state.fellBack = true;
+}
+
 // A thrown fetch or a 5xx gets ONE immediate in-run retry after a short backoff → { res } or { transportError }, or
 // { originMismatch } at once for a credential pinned to another API origin, which no retry changes.
-async function postWithRetry(flush, chunk) {
+async function postWithRetry(flush, chunk, state) {
   let res;
   let transportError = null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     transportError = null;
+    flush.sendPlain = state.plain;
     try {
-      res = await postRenewing(flush, chunk);
+      res = await postRenewing(flush, chunk, state);
     } catch (error) {
       if (isOriginMismatch(error)) return { originMismatch: true };
+      fallBackIfCompressed(flush, state);
       // A timeout and a socket reset need different follow-up (a 60s stall points at the
       // server, a reset at the connection) — keep them apart in the ledger and summary.
       transportError = error != null && error.name === 'AbortError' ? 'timeout' : 'network';
@@ -151,6 +184,7 @@ async function postWithRetry(flush, chunk) {
       continue;
     }
     if (res.status >= 500 && attempt === 0) {
+      fallBackIfCompressed(flush, state);
       // Drain the body so the pooled socket is clean before the retry.
       try { await res.text(); } catch { /* best-effort */ }
       await flush.sleep(RETRY_BACKOFF_MS);
@@ -161,22 +195,33 @@ async function postWithRetry(flush, chunk) {
   return { res, transportError };
 }
 
-// One chunk, one verdict. Returns true to continue the run, false to halt it.
-async function sendChunk(flush, chunk, depth = 0) {
-  const { res, transportError, originMismatch } = await postWithRetry(flush, chunk);
+// One chunk, one verdict (true goes on, false halts); `plain` covers its retries, resends and splits, `fellBack` marks a gzip stand-in.
+async function sendChunk(flush, chunk, depth = 0, plain = false, fellBack = false) {
+  const state = { plain, fellBack, renewedHere: false };
+  const { res, transportError, originMismatch } = await postWithRetry(flush, chunk, state);
   if (originMismatch) return applyVerdict(flush.result, chunk, reauthFailure());
   if (transportError) return applyVerdict(flush.result, chunk, transportFailure(transportError));
-  const verdict = interpretChunkResponse(res.status, await readResponseBody(res), chunk, depth);
+  const response = await readResponseBody(res);
+  if (refusedGzip(flush, res.status, response.code)) return sendChunk(flush, chunk, depth, true, true);
+  // A plain request standing in for a refused or failed gzip one landed: plain JSON for the rest of the run.
+  if (state.fellBack && res.status >= 200 && res.status < 300) flush.compression.enabled = false;
+  const verdict = interpretChunkResponse(res.status, response, chunk, depth);
   if (verdict.retry) {
     flush.result.timelinesDropped += chunk.timelines.length;
-    return sendChunk(flush, verdict.retry, depth);
+    return sendChunk(flush, verdict.retry, depth, state.plain);
   }
   if (verdict.split) {
-    const goOn = await sendChunk(flush, verdict.split[0], depth + 1);
+    const goOn = await sendChunk(flush, verdict.split[0], depth + 1, state.plain);
     if (!goOn) return false;
-    return sendChunk(flush, verdict.split[1], depth + 1);
+    return sendChunk(flush, verdict.split[1], depth + 1, state.plain);
   }
   return applyVerdict(flush.result, chunk, verdict);
+}
+
+// Any 4xx to a gzip body but a 401, a 429 or an API-coded 403 may be a proxy's doing: the chunk is resent plain once.
+function refusedGzip(flush, status, code) {
+  if (!flush.lastPostCompressed || status < 400 || status >= 500 || status === 401 || status === 429) return false;
+  return !(status === 403 && isCodedForbidden(code));
 }
 
 function applyVerdict(result, chunk, verdict) {

@@ -1,6 +1,7 @@
 // The history worker's pass: one sync-mode run per workspace a rule change owes its past sessions, settled on the pending marker.
 import fs from 'fs';
 import { runAudit as _runAudit, planHistoryRuns as _planHistoryRuns } from './history-run.mjs';
+import { createRunCache as _createRunCache } from './run-cache.mjs';
 import { isCleanSync } from './run-result.mjs';
 import { BackfillHalt, SYNC_MODE } from '../contract/history.mjs';
 import { readSessionHead as _readSessionHead } from '../sources/cli/session-files.mjs';
@@ -50,8 +51,8 @@ function plannedRuns(row, entries, plan) {
 }
 
 // One workspace's run → { outcome, sent, skipped }; a throwing run is a failed one.
-async function runOne(key, entry, options, io) {
-  const result = await io.runAudit({}, { ...options, account: key, mode: SYNC_MODE }).catch(() => null);
+async function runOne(key, entry, options, io, runCache) {
+  const result = await io.runAudit({ runCache }, { ...options, account: key, mode: SYNC_MODE }).catch(() => null);
   if (result == null) return { outcome: RunOutcome.FAILED, sent: 0, skipped: 0 };
   const starts = Array.isArray(result.recent) ? result.recent.map((r) => startedAtMs(r, io)) : [];
   return {
@@ -67,6 +68,7 @@ export async function runPendingHistory(key, deps = {}) {
     accounts: pick(deps.accounts, REAL_ACCOUNTS),
     runAudit: pick(deps.runAudit, _runAudit),
     planHistoryRuns: pick(deps.planHistoryRuns, _planHistoryRuns),
+    createRunCache: pick(deps.createRunCache, _createRunCache),
     readSessionHead: pick(deps.readSessionHead, _readSessionHead),
     stat: pick(deps.statImpl, (file) => fs.statSync(file)),
     now: pick(deps.now, () => Date.now()),
@@ -79,12 +81,14 @@ export async function runPendingHistory(key, deps = {}) {
   const entries = pendingHistoryOf(row);
   if (entries.length === 0) return [];
   await accounts.notePendingAttempt(key, entries.map((e) => e.tenantId), new Date(plannedAtMs).toISOString());
+  // One git cache for every workspace's run, so each session's git correlation runs once.
+  const runCache = io.createRunCache();
   const done = [];
   let busy = false;
   for (const { entry, options } of plannedRuns(row, entries, io.planHistoryRuns(row))) {
     let run = { outcome: busy ? RunOutcome.BUSY : RunOutcome.CLEAN, sent: 0, skipped: 0 };
     if (!busy && options != null) {
-      run = await runOne(key, entry, options, io);
+      run = await runOne(key, entry, options, io, runCache);
       busy = run.outcome === RunOutcome.BUSY;
     }
     const state = await accounts.settlePendingHistory(key, entry.tenantId, run, { plannedAtMs, nowMs: io.now() });

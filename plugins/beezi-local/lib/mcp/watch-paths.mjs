@@ -9,6 +9,7 @@ import { isMultiTenant } from '../workspace/tenants.mjs';
 import { establishStart } from '../delivery/coverage.mjs';
 import { runAnyCheckpoint } from '../pipeline/run-any-checkpoint.mjs';
 import { runAudit, planHistoryRuns } from '../history/history-run.mjs';
+import { createRunCache } from '../history/run-cache.mjs';
 import { SYNC_MODE } from '../contract/history.mjs';
 import { noHook, historySettlements, laggingReplays, settledByAll } from './watch-planner.mjs';
 import { recipientsFor, sessionCwd } from './watch-recipients.mjs';
@@ -21,6 +22,7 @@ const HISTORY_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const MAX_HISTORY_PER_PASS = 50;
 const MAX_LOGGED_REASONS = 500;
 const MAX_ATTEMPTS = 500;
+const HISTORY_IO = Object.freeze({ runAudit, createRunCache });
 
 export function messageOf(error) {
   return error != null && typeof error.message === 'string' && error.message !== '' ? error.message : 'unknown error';
@@ -178,15 +180,17 @@ function liveTenantIds(pass, row) {
 }
 
 // Each run takes only the batch sessions its workspace has not settled yet. → [{ run, result }] for the runs executed.
-async function runHistoryRuns(pass, row, historyPlan, batch) {
+export async function runHistoryRuns(pass, row, historyPlan, batch, io = HISTORY_IO) {
   const executed = [];
+  // One git cache per call, never longer: the watcher runs for hours while repos and branches change.
+  const runCache = io.createRunCache();
   for (const run of historyPlan.runs) {
     if (!pass.ctx.alive()) break;
     const key = settlementKey(row.key, run.tenantId);
     const ids = batch.filter((entry) => !isSettled(pass.record, key, entry)).map((entry) => entry.sessionId);
     if (ids.length === 0) continue;
-    const result = await runAudit(
-      { onProgress: () => { pass.ctx.renew(); } },
+    const result = await io.runAudit(
+      { runCache, onProgress: () => { pass.ctx.renew(); } },
       { account: row.key, tenantId: run.tenantId, sessionRoutes: run.sessionRoutes, excludedSessionIds: run.excludedSessionIds, mode: SYNC_MODE, onlySessionIds: ids },
     );
     executed.push({ run, result });
