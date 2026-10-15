@@ -75,6 +75,11 @@ export function ruleAddCommandLine(name, place, row, defer = false) {
   return commandLine(name, `rule add ${ruleTargetFlag(place)} --account ${row.key}${deferSuffix(defer)} <tenants>`);
 }
 
+// The command that adds one newly-joined workspace to a place.
+export function joinedPickCommandLine(name, place, row, defer = false) {
+  return commandLine(name, `joined pick ${ruleTargetFlag(place)} --account ${row.key}${deferSuffix(defer)} <tenant>`);
+}
+
 // The workspaces to offer, one line each; with `newIds`, new= says which were just joined. role= is last and may be empty.
 export function workspaceLines(row, newIds = null) {
   return tenantsOf(row).map((t) => {

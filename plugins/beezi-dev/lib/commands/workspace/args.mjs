@@ -17,7 +17,7 @@ export const USAGE = 'Usage: workspace.mjs rules [--table] [--session <id>] [--a
   + ' | rule remove <n> [--account <ref>]'
   + ' | rule add-all (<id|name|n>… | none) [--session <id>] [--account <ref>]'
   + ' | routes [--session <id>] [--account <ref>]'
-  + ' | joined [add-all | done] [--session <id>] [--account <ref>]'
+  + ' | joined [add-all | done | pick (--repo <url> | --folder <path> | --outside) <id|name|n>] [--session <id>] [--account <ref>]'
   + ' | new-folders [ask | send <id|name|n>… | none] [--session <id>] [--account <ref>]'
   + ' | read <id|name|n> [--session <id>] [--account <ref>]';
 

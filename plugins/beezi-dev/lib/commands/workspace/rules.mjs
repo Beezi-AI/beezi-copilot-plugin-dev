@@ -125,7 +125,7 @@ export async function rules(argv) {
 }
 
 // The rule's key from --current (the session's directory; home, / and temp give `outside`), --repo, --folder or --outside.
-function ruleKey(target, dir, ctx) {
+export function ruleKey(target, dir, ctx) {
   if (target.flag === '--outside') return outsideKey();
   if (target.flag === '--current') {
     const key = routeKeyForDir(dir, ctx);
@@ -152,8 +152,8 @@ function findRule(row, ref) {
   return found;
 }
 
-// One of TARGET_FLAGS (with its value) and the workspace refs around it.
-function parseRuleTarget(rest) {
+// One of TARGET_FLAGS (with its value, null when absent) and the workspace refs around it; each caller checks both.
+export function parseRuleTarget(rest) {
   let target = null;
   const refs = [];
   for (let i = 0; i < rest.length; i += 1) {
@@ -168,7 +168,6 @@ function parseRuleTarget(rest) {
     if (!bare && (value == null || value.trim() === '')) throw new UserError(`${arg} needs a value.`);
     target = { flag: arg, value };
   }
-  if (target == null || refs.length === 0) throw new UserError(USAGE);
   return { target, refs };
 }
 
@@ -176,6 +175,7 @@ async function ruleAdd(argv, cx = { deferUpload: false }) {
   const { session, rest: afterSession } = parseSessionFlag(argv);
   const { account, rest } = await parseAccountFlag(afterSession);
   const { target, refs } = parseRuleTarget(rest);
+  if (target == null || refs.length === 0) throw new UserError(USAGE);
   const row = await resolveAccount(account);
   requireKnownWorkspaces(row);
   requireNoneForSingle(row, refs);

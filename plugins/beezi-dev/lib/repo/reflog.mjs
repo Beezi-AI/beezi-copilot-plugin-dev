@@ -28,12 +28,19 @@ export function buildBranchTimeline(events) {
 }
 
 // Branch of the last boundary whose ms <= target. Assumes a non-null timeline
-// (which always carries the -Infinity sentinel, so any timestamp resolves).
+// (which always carries the -Infinity sentinel, so any timestamp resolves). Binary search; ties take the last.
 export function branchAt(timeline, ms) {
-  let branch = timeline[0].branch;
-  for (const b of timeline) {
-    if (b.ms <= ms) branch = b.branch;
-    else break;
+  let at = 0;
+  let lo = 0;
+  let hi = timeline.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >>> 1;
+    if (timeline[mid].ms <= ms) {
+      at = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
   }
-  return branch;
+  return timeline[at].branch;
 }

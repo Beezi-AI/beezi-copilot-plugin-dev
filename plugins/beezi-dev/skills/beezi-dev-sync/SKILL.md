@@ -50,47 +50,50 @@ Lines:
 - `J<i>. <short> (<label>), <k> sessions, now: <where> account=<key> kind=<repo|folder|outside> match=<…> now=<ids|none|pending>`
   is one repo or folder, where `<where>` is where it sends today: workspace names, `not tracked` or
   `no rule yet`. `J<i>. outside a project, …` is sessions in the home folder, `/`, a temp folder or a Copilot app chat folder;
-- `J<i>-command=<command>` comes right after its `J` line and ends in a literal `<tenants>`;
+- `J<i>-command=<command>` comes right after its `J` line: the command that adds one new workspace to
+  it, ending in a literal `<tenant>`;
 - `add-all-command=<command>`;
-- `done-command=<command>`;
+- `done-command=<command>` records that the new workspaces were reviewed, and keeps unpicked repos and
+  folders sending where they send now;
 - `joined=<total>` is last.
 
 `joined=0` → go to "Then, repos and folders with no rule".
 
 Run the printed commands unchanged; whatever they route gets its history uploaded.
 
-Per account with `J` lines (with several accounts, add " (<email>)" right after each question's "go?"):
+Per account with `J` lines (with several accounts, add " (<email>)" right after each question's "go?",
+or after "<name>?" in the per-workspace questions):
 
 More than 4 `J` lines → first ask "You joined <names>. Where should analytics for these <N> repos and
 folders go? Their past sessions will be sent there too." (`<N>` = that account's number of `J` lines) with:
 - "Add <names> to all <N> — repos you don't track, and ones with no rule yet, stay as they are";
-- "Choose per repo — one question per repo or folder";
+- "Choose repos — pick which repos and folders go to each new workspace";
 - "Leave them as they are — nothing changes, and you're not asked about <names> again".
 
-"Add … to all" → run the `add-all-command=` text EXACTLY ONCE. "Choose per repo" → the per-repo
+"Add … to all" → run the `add-all-command=` text EXACTLY ONCE. "Choose repos" → the per-workspace
 questions. "Leave them as they are" → run the `done-command=` text EXACTLY ONCE. No answer → nothing;
 the next /beezi-dev-sync asks again.
 
-The per-repo question (per `J` line, numbered `(i of N)` across that account's `J` lines, `N` = their
-number; several allowed). This question counter restarts for each account; the printed `J` numbers are
-global across accounts. Preserve each printed `J` number to match its command; never use the question
-counter to look up a `J<i>-command`. `<where>` is the text after `now: ` up to ` account=`.
-- For `kind=repo`: "(i of N) Now: <where>. Where should analytics for <short> go? Their past sessions will be sent there too.", ending
-  with "Don't track this repo".
-- For `kind=folder`: "(i of N) Now: <where>. Where should analytics for <label> (and everything inside
-  it) go? Their past sessions will be sent there too.", ending with "Don't track this folder".
-- For `kind=outside`: "(i of N) Now: <where>. Where should analytics for sessions outside a project
-  folder go? Their past sessions will be sent there too.", ending with "Don't track these".
+4 or fewer `J` lines → the per-workspace questions.
 
-Choices: one per `W.` line (name — role, or "Beezi workspace"; add ", new" for `new=yes`), then that
-last choice.
+Per-workspace questions: one `ask_user` question per `W.` line with `new=yes` of that account, in
+order, where `<name>` is that line's text after `W. ` up to ` account=`. Ask "Which repos and folders
+should also send analytics to <name>? Their past sessions will be sent there too." Several allowed:
+number the choices and end the question with " You can pick more than one: type their numbers
+separated by commas." Choices: one per `J` line of that account, in order, "<short> — Now: <where>"
+(or "<short> — No rule yet" when `<where>` is `no rule yet`), where `<short>` is the `J` line's text
+after `J<i>. ` up to ` (` or `,`, and `<where>` the text after `now: ` up to ` account=`; then last
+"None of these — nothing from these goes to <name>". The printed `J` numbers are global across
+accounts and the choice numbers are not: preserve each printed `J` number to match its command; never
+use a choice number to look up a `J<i>-command`.
 
-For each answered `J` line, run its `J<i>-command=` text EXACTLY ONCE, changing only the final
-`<tenants>`: the chosen `tenant=` values joined by commas inside one pair of single quotes, like
-`'<id>,<id>'`, or `none` when the last choice was picked (it wins). After the last `J` question has
-been answered (not skipped or dismissed), run the `done-command=` text EXACTLY ONCE; otherwise run no
-`done-command`, and the next login or sync asks again. Never rebuild a command or re-quote its path.
-Write each command's first line verbatim.
+For each picked `J` line, run its `J<i>-command=` text EXACTLY ONCE, changing only the final
+`<tenant>`: that workspace's `tenant=` value inside single quotes, like `'<id>'`. "None of these",
+alone or with other choices, wins: run no `J<i>-command` for that question (it still counts as an
+answer). An empty or unmatched answer, or a dismissed question, is no answer and runs nothing.
+After every new workspace's question has been answered, run the `done-command=` text EXACTLY ONCE;
+otherwise run no `done-command`, and the next login or sync asks again. Never rebuild a command or re-quote its path. Write each command's first
+line verbatim.
 
 Then, repos and folders with no rule. Run EXACTLY (add `--account <key>` when the user named an
 account): `node "<plugin-root>/scripts/workspace.mjs" routes --defer-upload`. Its output is for you only, except the

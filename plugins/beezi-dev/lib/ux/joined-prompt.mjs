@@ -19,7 +19,7 @@ function joinedPromptText(rows, root, sessionId) {
     `Beezi: ${who}. Before doing anything else, run EXACTLY ${commands}.`,
     'If it prints joined=0, say nothing about this.',
     `Otherwise read "${root}/skills${SYNC_SKILL}/SKILL.md" and follow its "First, new workspaces" part from "Lines:" up to the paragraph that begins "Then, repos and folders with no rule. Run", for that output only, with these changes:`,
-    '(1) always ask the first question ("You joined …") first, with the ask_user tool, even with 4 or fewer J lines, and add the choice "Later — ask me again in my next session", which runs nothing;',
+    '(1) always ask the first question ("You joined …") first, with the ask_user tool, even with 4 or fewer J lines, and add the choice "Later — ask me again in my next session", which runs nothing; on "Choose repos", ask for each new workspace "Which repos and folders should also send analytics to <name>?" (worded as in that skill) with the J lines as numbered choices ending in "None of these" ("None of these", alone or with other choices, wins: run no J-command for that question, though it still counts as an answer), and for each picked one run its `joined pick` J-command with that workspace\'s tenant id;',
     '(2) leave out the "Add … to all" choice when every J line ends in now=pending or now=none;',
     '(3) a dismissed question runs nothing; it is asked again next session;',
     '(4) stop after that part: run neither routes nor sync.mjs, because the upload starts by itself.',

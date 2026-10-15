@@ -103,7 +103,7 @@ async function planRecipients(ctx) {
 // The billing config and the repo map, read once before the lock; VS Code never touches the lock during git calls.
 function openRun(ctx) {
   readBilling(ctx);
-  ctx.repo = createRepoContext(ctx.gitImpl, () => {});
+  ctx.repo = createRepoContext(ctx.gitImpl, () => {}, { fastRoot: ctx.deps.runCache == null ? null : ctx.deps.runCache.fastRoot });
   return CONTINUE;
 }
 
@@ -292,7 +292,7 @@ const STEPS = [readInput, locateChat, settleChat, planRecipients, openRun, requi
 function newContext(input, deps, options, out) {
   return {
     input, deps, options, out, errors: out.errors,
-    gitImpl: deps.gitImpl == null ? git : deps.gitImpl,
+    gitImpl: deps.runCache != null ? deps.runCache.git : (deps.gitImpl == null ? git : deps.gitImpl),
     fetchImpl: deps.fetchImpl == null ? resolveFetch() : deps.fetchImpl,
     lock: createLockHolder(),
     // An unread billing config still sends billing_source "unknown".

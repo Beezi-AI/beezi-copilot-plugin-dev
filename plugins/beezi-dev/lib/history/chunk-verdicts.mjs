@@ -151,11 +151,18 @@ export function interpretChunkResponse(status, response, chunk, depth) {
   return verdict(BackfillSessionStatus.REJECTED, rejectionReason(status, message, raw), 'permanentRejections', said);
 }
 
+const CODED_403 = ['BACKFILL_ALREADY_COMPLETED', 'BACKFILL_NOT_ALLOWED', 'TRACKING_DISABLED'];
+
+// The API's own coded 403s, which judge the account rather than the request.
+export function isCodedForbidden(code) {
+  return CODED_403.indexOf(code) !== -1;
+}
+
 // Only the coded 403s are actionable; a code-less 403 (seat revoked, deactivated user) must never read as "the pull is
 // done" or "tracking is off".
 function forbiddenVerdict(code, said) {
   if (code === 'BACKFILL_ALREADY_COMPLETED') return verdict(null, null, null, said, { halt: BackfillHalt.ALREADY_COMPLETED, goOn: false });
   // TRACKING_DISABLED should be unreachable here (the backfill routes are ungated); defensively treat it as not-allowed.
-  if (code === 'BACKFILL_NOT_ALLOWED' || code === 'TRACKING_DISABLED') return verdict(null, null, null, said, { halt: BackfillHalt.NOT_ALLOWED, goOn: false });
+  if (isCodedForbidden(code)) return verdict(null, null, null, said, { halt: BackfillHalt.NOT_ALLOWED, goOn: false });
   return verdict(BackfillSessionStatus.FAILED, said, 'retryableFailures', said, { halt: BackfillHalt.FORBIDDEN, goOn: false });
 }

@@ -70,10 +70,13 @@ function fetchOf(deps) {
 export async function postJson(url, session, body, deps = {}) {
   const fetchImpl = fetchOf(deps);
   const headers = { ...authHeaders(session, url), 'Content-Type': 'application/json' };
+  // History passes its gzip encoder so live posts never load zlib; it runs before the timer starts.
+  const gzipped = deps.gzip == null ? null : await deps.gzip(body);
+  if (gzipped != null) headers['Content-Encoding'] = 'gzip';
   return withTimeout(deps, (signal) => fetchImpl(url, {
     method: 'POST',
     headers,
-    body: JSON.stringify(body),
+    body: gzipped == null ? JSON.stringify(body) : gzipped,
     redirect: 'error',
     signal,
   }));
