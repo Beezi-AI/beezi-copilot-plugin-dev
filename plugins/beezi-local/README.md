@@ -131,6 +131,13 @@ the tool list, a call to one is refused locally, and the bridge replaces the ser
 The interactive skills call `preflight.mjs` first and refuse to continue in autopilot, so an
 auto-answered question can never create a routing rule or grant consent.
 
+**Terminal setup.** The one-line installers run `setup.mjs` once, right after the install, in the same
+terminal: the `beezi-login` steps (minus the current session's folder rule; there is no session), then crash
+reports and the status line. It runs `preflight.mjs`, `accounts.mjs`, `login.mjs`, `workspace.mjs`,
+`billing-capture.mjs`, `backfill.mjs`, `settings.mjs`, `telemetry.mjs` and `statusline-install.mjs` as child
+processes. Where no browser can open (SSH, a Codespace, a dev container, Linux with no display) it signs in
+with the paste-back flow: `login.mjs --no-browser`, then `--complete` with the pasted address.
+
 Skill names are prefixed `beezi-` because Copilot already has `/login`, `/logout`, `/settings`,
 `/usage` and `/statusline`. Skills name MCP tools bare (`get_analytics_instructions`) and never with a
 server prefix, because Copilot shows tools as `<server>-<tool>` and the server key differs per build.
