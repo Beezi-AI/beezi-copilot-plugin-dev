@@ -159,7 +159,7 @@ async function planRecipients(ctx) {
 
 // Thousands of git calls in a long audit must not outlast the lock's stale limit.
 function openRepos(ctx) {
-  ctx.repo = createRepoContext(ctx.gitImpl, () => ctx.keepLock());
+  ctx.repo = createRepoContext(ctx.gitImpl, () => ctx.keepLock(), { fastRoot: ctx.deps.runCache == null ? null : ctx.deps.runCache.fastRoot });
   return CONTINUE;
 }
 
@@ -325,7 +325,7 @@ const STEPS = [
 function newContext(input, deps, options, out) {
   return {
     input, deps, options, out, errors: out.errors,
-    gitImpl: deps.gitImpl == null ? git : deps.gitImpl,
+    gitImpl: deps.runCache != null ? deps.runCache.git : (deps.gitImpl == null ? git : deps.gitImpl),
     fetchImpl: deps.fetchImpl == null ? resolveFetch() : deps.fetchImpl,
     lock: createLockHolder(), keepLock: () => {},
     billing: { fields: {}, identity: {}, config: null, at: null, byok: null },

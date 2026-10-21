@@ -12,6 +12,9 @@ const INDEX_LOCK_WAIT_MS = 2_000;
 
 export const AccountStatus = Object.freeze({ LINKED: 'linked', REVOKED: 'revoked' });
 
+// The UserError message for a key with no row, so a caller can tell it from the lock and unreadable-index errors.
+export const NO_SUCH_ACCOUNT = 'No such linked account.';
+
 export function newAccountKey() {
   return crypto.randomBytes(4).toString('hex');
 }
@@ -77,7 +80,7 @@ export async function getDefaultKey() {
 export function setDefault(key) {
   return withIndexLock(async () => {
     const index = await readIndex();
-    if (!index.accounts.some((a) => a.key === key)) throw new UserError('No such linked account.');
+    if (!index.accounts.some((a) => a.key === key)) throw new UserError(NO_SUCH_ACCOUNT);
     index.default = key;
     writeIndex(index);
     return index;
@@ -130,7 +133,7 @@ export function mutateRow(key, fn) {
   return withIndexLock(async () => {
     const index = await readIndex();
     const row = index.accounts.find((a) => a.key === key);
-    if (!row) throw new UserError('No such linked account.');
+    if (!row) throw new UserError(NO_SUCH_ACCOUNT);
     const result = fn(row);
     writeIndex(index);
     return result;

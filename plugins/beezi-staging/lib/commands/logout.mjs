@@ -20,12 +20,19 @@ import { checkInteractive as _checkInteractive } from '../host/mode-guard.mjs';
 import { forgetAccountInSessions } from '../workspace/session-routes.mjs';
 
 const LOGOUT_LOCK_WAIT_MS = 30_000;
+const NOT_LINKED = 'Beezi: this machine is not linked. Nothing to do.';
+const MORE_THAN_ONE = '✗ More than one account is linked — pick one.';
 
 // Explicit logout, as lines. Never claims a server unlink it did not get, and never claims to
-// have logged out when the credentials are still there.
+// have logged out when the credentials are still there. `single` logs out the only linked account in
+// the same call; with none or several linked it removes nothing and lists them, as `list` does.
 export async function runLogout(deps = {}, options = {}) {
-  if (options.list) return logoutAccounts(deps, options);
-  // Every mode but --list removes an account, so an unattended session must not reach it.
+  if (options.list) return listLines(await readIndex(deps));
+  if (options.single) {
+    const index = await readIndex(deps);
+    if (index.accounts.length !== 1) return index.accounts.length === 0 ? listLines(index) : [MORE_THAN_ONE, ...listLines(index)];
+  }
+  // Past here an account is removed, so an unattended session must not reach it.
   const verdict = await (deps.checkInteractive || _checkInteractive)({ purpose: 'logging out of Beezi', requireWrite: true });
   if (verdict != null && verdict.ok === false) return [`✗ ${verdict.message}`];
   const lifecycle = await acquireCredentialLock({ lifecycle: true, waitMs: deps.lockWaitMs == null ? 30_000 : deps.lockWaitMs }, deps);
@@ -34,11 +41,15 @@ export async function runLogout(deps = {}, options = {}) {
   finally { releaseCredentialLock(lifecycle); }
 }
 
+function listLines(index) {
+  if (!index.accounts.length) return [NOT_LINKED];
+  return index.accounts.map((a, i) => `${i + 1}. ${describeAccount(a)} [${a.key}]${a.key === index.default ? ' (default)' : ''}`);
+}
+
+// Read again under the lock, so an account linked after `single` counted one lands in the --account refusal.
 async function logoutAccounts(deps, options) {
   const index = await readIndex(deps);
-  if (options.list && !index.accounts.length) return ['Beezi: this machine is not linked. Nothing to do.'];
-  if (options.list) return index.accounts.map((a, i) => `${i + 1}. ${describeAccount(a)} [${a.key}]${a.key === index.default ? ' (default)' : ''}`);
-  if (!index.accounts.length) return ['Beezi: this machine is not linked. Nothing to do.'];
+  if (!index.accounts.length) return [NOT_LINKED];
   if (!options.all && !options.account && index.accounts.length > 1) throw new UserError('Choose --account <key|email|number> or --all. Run /beezi-staging-settings account to list accounts.');
   const keys = options.all ? index.accounts.map(a => a.key) : [options.account ? await resolveAccountRef(options.account, deps) : index.accounts[0].key];
   const remaining = index.accounts.filter(a => !keys.includes(a.key));

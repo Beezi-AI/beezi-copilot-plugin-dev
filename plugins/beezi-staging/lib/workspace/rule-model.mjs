@@ -57,6 +57,12 @@ export function shortLabel(rule) {
   return typeof rule.label === 'string' && rule.label !== '' ? rule.label : match;
 }
 
+// A rule as a route's reason names it: "rule R1", "rule R2 for scratch" (own === false: a parent folder's rule), or "rule".
+export function ruleReasonText(index, own, short) {
+  const name = index == null ? 'rule' : `rule R${index}`;
+  return own === false ? `${name} for ${short}` : name;
+}
+
 // Whether a place's match and label are safe to print on a machine line (no control character).
 export function isLineSafePlace(place) {
   return place != null && !UNSAFE_LINE.test(String(place.match)) && !UNSAFE_LINE.test(String(place.label));

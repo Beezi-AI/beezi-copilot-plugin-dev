@@ -11,9 +11,17 @@ export function isDirectory(p) {
 // (longest-prefix), then a filesystem walk-up. The last two rescue git false-nulls (git not on
 // PATH, 5s timeout, Windows dubious-ownership) where the dir genuinely is inside a repo.
 // Returns null when `dir` is falsy or no layer resolves a root.
-export function resolveRepoRoot(gitImpl, dir, cache, map = null) {
+// A history run's `fastRoot(dir)` answers git's root once per repository, or undefined to take today's path.
+export function resolveRepoRoot(gitImpl, dir, cache, map = null, fastRoot = null) {
   if (!dir) return null;
   if (cache && cache.has(dir)) return cache.get(dir);
+  if (fastRoot != null) {
+    const fast = fastRoot(dir);
+    if (fast !== undefined) {
+      if (cache) cache.set(dir, fast);
+      return fast;
+    }
+  }
   let root = null;
   try {
     const out = gitImpl(['rev-parse', '--show-toplevel'], dir).trim();

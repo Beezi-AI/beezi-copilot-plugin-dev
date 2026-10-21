@@ -9,6 +9,7 @@ import { isMultiTenant } from '../workspace/tenants.mjs';
 import { establishStart } from '../delivery/coverage.mjs';
 import { runAnyCheckpoint } from '../pipeline/run-any-checkpoint.mjs';
 import { runAudit, planHistoryRuns } from '../history/history-run.mjs';
+import { createRunCache } from '../history/run-cache.mjs';
 import { SYNC_MODE } from '../contract/history.mjs';
 import { noHook, historySettlements, laggingReplays, settledByAll } from './watch-planner.mjs';
 import { recipientsFor, sessionCwd } from './watch-recipients.mjs';
@@ -21,6 +22,7 @@ const HISTORY_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const MAX_HISTORY_PER_PASS = 50;
 const MAX_LOGGED_REASONS = 500;
 const MAX_ATTEMPTS = 500;
+const HISTORY_IO = Object.freeze({ runAudit, createRunCache });
 
 export function messageOf(error) {
   return error != null && typeof error.message === 'string' && error.message !== '' ? error.message : 'unknown error';
@@ -151,13 +153,18 @@ export async function runFreshPath(pass, fresh) {
   return pass.ctx.renew() ? null : 'lost';
 }
 
-// The account's one-time backfill is sealed: the local flag for a single-workspace account, every reached workspace's ledger otherwise.
-function backfillSealed(row, identity, plan) {
-  if (!isMultiTenant(row)) {
-    const tracking = readTrackingState(row.key);
-    return tracking != null && tracking.backfillCompleted === true;
-  }
-  return plan.runs.length > 0 && plan.runs.every((run) => isComplete(loadLedger(row.key, identity, run.tenantId)));
+// A single-workspace account's one-time backfill is sealed: the local flag.
+function backfillSealed(row) {
+  const tracking = readTrackingState(row.key);
+  return tracking != null && tracking.backfillCompleted === true;
+}
+
+// The workspaces whose history is settled: the one-time import sealed, or a clean sync covered it.
+export function settledRuns(row, identity, plan) {
+  return plan.runs.filter((run) => {
+    const ledger = loadLedger(row.key, identity, run.tenantId);
+    return isComplete(ledger) || typeof ledger.historySettledAt === 'string';
+  });
 }
 
 // The account's history pass is due and some live recipient belongs to it.
@@ -173,15 +180,17 @@ function liveTenantIds(pass, row) {
 }
 
 // Each run takes only the batch sessions its workspace has not settled yet. → [{ run, result }] for the runs executed.
-async function runHistoryRuns(pass, row, historyPlan, batch) {
+export async function runHistoryRuns(pass, row, historyPlan, batch, io = HISTORY_IO) {
   const executed = [];
+  // One git cache per call, never longer: the watcher runs for hours while repos and branches change.
+  const runCache = io.createRunCache();
   for (const run of historyPlan.runs) {
     if (!pass.ctx.alive()) break;
     const key = settlementKey(row.key, run.tenantId);
     const ids = batch.filter((entry) => !isSettled(pass.record, key, entry)).map((entry) => entry.sessionId);
     if (ids.length === 0) continue;
-    const result = await runAudit(
-      { onProgress: () => { pass.ctx.renew(); } },
+    const result = await io.runAudit(
+      { runCache, onProgress: () => { pass.ctx.renew(); } },
       { account: row.key, tenantId: run.tenantId, sessionRoutes: run.sessionRoutes, excludedSessionIds: run.excludedSessionIds, mode: SYNC_MODE, onlySessionIds: ids },
     );
     executed.push({ run, result });
@@ -208,15 +217,17 @@ async function syncAccountHistory(pass, row, batch) {
   const identity = linked != null && linked.clientId != null ? linked.clientId : (row.clientId == null ? null : row.clientId);
   const multi = isMultiTenant(row);
   // Cheap single-workspace gate first: an unsealed account starts as soon as it seals, without re-planning every pass.
-  if (!multi && !backfillSealed(row, identity, null)) return false;
+  if (!multi && !backfillSealed(row)) return false;
   const historyPlan = planHistoryRuns(row, { onlySessionIds: batch.map((entry) => entry.sessionId) });
-  if (multi && !backfillSealed(row, identity, historyPlan)) {
+  const runs = multi ? settledRuns(row, identity, historyPlan) : historyPlan.runs;
+  if (multi && runs.length === 0) {
     record.historyAt[row.key] = Date.now();
     pass.dirty = true;
     return false;
   }
-  const executed = await runHistoryRuns(pass, row, historyPlan, batch);
-  const settled = recordSettlements(pass, row, historyPlan, executed, batch);
+  const settledPlan = { ...historyPlan, runs };
+  const executed = await runHistoryRuns(pass, row, settledPlan, batch);
+  const settled = recordSettlements(pass, row, settledPlan, executed, batch);
   // A busy history lease is fine: the user's own run covers it.
   record.historyAt[row.key] = Date.now();
   pass.dirty = true;

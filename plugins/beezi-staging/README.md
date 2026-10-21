@@ -75,6 +75,7 @@ skills/<name>/SKILL.md               # one folder per skill; the folder name equ
 lib/<area>/*.mjs                     # zero-dependency Node engine, on a Node 13.2 floor, one folder per area
 scripts/*.mjs                        # hook, skill and MCP entry points
 tools/verify-minimum-runtime.cjs     # parses every lib/ and scripts/ file, imports lib/, checks the Node 13.2 floor
+RELEASE_NOTES.md                     # what changed in each version, shown by /beezi-release-notes
 ```
 
 `env.json` ships in every build. The production build carries `{ "name": "", "apiBase": … }`; an
@@ -94,6 +95,7 @@ the same text in `hookSpecificOutput.additionalContext` for VS Code.
 | Event | Script | Work |
 |---|---|---|
 | `SessionStart` | `session-start.mjs` | link check, notices, workspace question, queue flush, prune, billing reconcile, account check-in, update check |
+| `SessionStart` (detached) | `history-worker.mjs` | sends past sessions to a workspace that a rule or the New folders default newly reaches; rule changes, `/beezi-sync`, the login upload and the watcher start it too |
 | `SessionStart` (detached) | `catch-up-worker.mjs` | checkpoints up to 3 recent sessions whose file grew past what was reported or whose final shutdown is still owed; one per machine at a time |
 | `UserPromptSubmit` | `track-prompt.mjs` | records the interaction mode; asks for a background quota refresh when one is due |
 | `PostToolUse` (shell) | `checkpoint.mjs` | checkpoint after `git commit`, `switch`, `checkout`, `merge`, `rebase` or `pull` (also with `-C <dir>`) and `gh pr checkout` |
@@ -125,10 +127,18 @@ the tool list, a call to one is refused locally, and the bridge replaces the ser
 | `beezi-settings` | `preflight.mjs`, `settings.mjs`, `workspace.mjs`, `accounts.mjs`, `billing-capture.mjs`, `telemetry.mjs`, `statusline-install.mjs` |
 | `beezi-sync` | `preflight.mjs`, `accounts.mjs`, `workspace.mjs routes`, `sync.mjs` |
 | `beezi-status` | `settings.mjs status`, or the `beezi_status` MCP tool |
+| `beezi-release-notes` | `release-notes.mjs` |
 | `beezi-analytics` | the MCP tools `get_analytics_instructions` and `get_my_usage_summary` (plus `workspace.mjs read` when a workspace is named) |
 
 The interactive skills call `preflight.mjs` first and refuse to continue in autopilot, so an
 auto-answered question can never create a routing rule or grant consent.
+
+**Terminal setup.** The one-line installers run `setup.mjs` once, right after the install, in the same
+terminal: the `beezi-login` steps (minus the current session's folder rule; there is no session), then crash
+reports and the status line. It runs `preflight.mjs`, `accounts.mjs`, `login.mjs`, `workspace.mjs`,
+`billing-capture.mjs`, `backfill.mjs`, `settings.mjs`, `telemetry.mjs` and `statusline-install.mjs` as child
+processes. Where no browser can open (SSH, a Codespace, a dev container, Linux with no display) it signs in
+with the paste-back flow: `login.mjs --no-browser`, then `--complete` with the pasted address.
 
 Skill names are prefixed `beezi-` because Copilot already has `/login`, `/logout`, `/settings`,
 `/usage` and `/statusline`. Skills name MCP tools bare (`get_analytics_instructions`) and never with a
@@ -152,8 +162,11 @@ file that changed it does one of three things:
 - **Active session it has not seen before:** it establishes a start line from what Beezi already
   holds (the same rule `/beezi-sync` uses) and then checkpoints. Every hook-less Agent Host session
   lands here.
-- **Idle session it has not seen before:** it counts as history and goes through the sync path, and
-  only after the login import has finished. The watcher never performs the one-time import.
+- **Idle session it has not seen before:** it counts as history and goes through the sync path, for
+  each workspace only once that workspace's past sessions were sent: the login import finished, or a
+  `/beezi-sync` or history-worker run covered it. The watcher never performs the one-time import.
+  When a workspace still owes its past sessions, the watcher starts the history worker for it (see
+  [Accounts and workspace routing](#accounts-and-workspace-routing)) instead of uploading them itself.
 
 Files over 64 MB are skipped and logged once. Once every 6 hours the elected watcher also runs the
 housekeeping that `SessionStart` runs (prune, billing reconcile, account check-in, queue flush), so
@@ -334,8 +347,19 @@ account, `/beezi-settings account` to change the default, and `/beezi-logout` to
 
 An account that belongs to several Beezi workspaces chooses where each repo or folder sends its
 analytics: **rules** for specific repos and folders, and a **New folders** default for the rest
-(ask once, send to chosen workspaces, or don't send). `/beezi-settings` shows and changes both.
+(ask once, send to chosen workspaces, or don't send). `/beezi-settings` shows and changes both: its rules
+table starts with a Default row, marks the row that applies to this folder "← you're here", and lists each
+rule's path or remote and its sessions over the last 30 days. A rule or New folders change made there ends
+with "Undo: /beezi-settings undo", which puts the last change back. `/beezi-login` and the terminal setup ask
+one question, "Where should analytics from this machine go?", and a session in a repo or folder with no
+rule yet asks where that place's analytics go. On the Copilot CLI the status line can end with a Beezi
+badge naming where this folder's analytics go; it is off until `/beezi-settings statusline badge on`.
 Analytics held for an unanswered question wait on disk and are sent once you answer.
+
+When a rule or the New folders default starts sending to a workspace it did not reach before, a
+detached history worker (`history-worker.mjs`) sends that workspace this machine's past sessions,
+skipping what it already holds. If it cannot finish, the next session start or the watcher tries
+again. A later session start tells you in one line how it went.
 
 ## Data root
 
@@ -353,6 +377,8 @@ update-check.json  plan-nudge.json  upgrade-notice.json  installation.json
 telemetry.json  telemetry-send.json  telemetry/
 watcher.json  locks/  logs/watcher.log  hooks-seen.json
 statusline/  statusline.sh  statusline-original.json   # status line snapshots; the shim and the saved original exist only while it is on
+statusline-badge.json         # whether the CLI status line ends with the Beezi badge (off unless turned on)
+rule-undo.json                # the last routing change, for /beezi-settings undo
 ```
 
 The plugin never reads `~/.beezi` (Claude Code) or `~/.beezi-codex` (Codex) and ignores `BEEZI_HOME`,
@@ -366,7 +392,7 @@ has its own credentials.
 Every request carries `X-Beezi-Agent: copilot`, `X-Beezi-Host`, `X-Beezi-Client`, the plugin version
 header and, for an account in several workspaces, `X-Beezi-Tenant`. The OAuth client registers as
 `Beezi Copilot plugin — <hostname>`. Copilot-specific routes are `/me/copilot/whoami`,
-`/me/copilot/machine` and `/me/copilot/usage`; the rest (`/sessions/*`, `/repos/status`,
+`/me/copilot/machine` and `/me/copilot/usage`; the rest (`/sessions/*`,
 `/me/cli-agent/account`, `/cli-agent/plugin-diagnostics/*`) are shared with the other agents and read
 the vendor from the header.
 
@@ -382,8 +408,8 @@ the vendor from the header.
 | `BEEZI_COPILOT_WATCHER` | unset (on) | `0`, `false`, `no`, `off` or `disabled` turns the watcher off |
 | `BEEZI_COPILOT_QUOTA` | unset (on) | `0`, `false`, `no` or `off` turns the monthly quota probe off |
 | `BEEZI_COPILOT_CLI` | `copilot` | the binary the quota probe starts, for a machine where `copilot` is not on the `PATH` hooks inherit |
-| `BEEZI_STATUSLINE_CHAIN` | set by the status line shim | the status line command Beezi wrapped; it runs and its output is shown unchanged |
-| `BEEZI_STATUSLINE_SILENT` | unset | `1` keeps the status line capture and shows nothing |
+| `BEEZI_STATUSLINE_CHAIN` | set by the status line shim | the status line command Beezi wrapped; it runs and its output is shown unchanged, plus the Beezi badge at the end when it is on |
+| `BEEZI_STATUSLINE_SILENT` | unset | `1` keeps the status line capture and shows nothing, and no badge |
 | `BEEZI_DEBUG` | unset | any value makes the CLI scripts print the raw error text |
 | `COPILOT_HOME` | `~/.copilot` | read, not owned: where Copilot keeps its files |
 | `PLUGIN_ROOT` | set by Copilot | read, not owned: the plugin's install folder |
@@ -404,8 +430,8 @@ edited by hand. A build step derives each one from this plugin and rewrites only
 - `package.json`: the same version;
 - `env.json`: the environment name, the API base and the update manifest URL;
 - `mcp.json`: the server key, from `beezi-copilot` to `beezi-copilot-<env>`;
-- the skill folders, their `name` fields and every `/beezi-<skill>` mention in `skills/`, `lib/` and
-  `scripts/`, from `beezi-<skill>` to `beezi-<env>-<skill>`, for example `/beezi-dev-login`.
+- the skill folders, their `name` fields and every `/beezi-<skill>` mention in `skills/`, `lib/`,
+  `scripts/` and `RELEASE_NOTES.md`, from `beezi-<skill>` to `beezi-<env>-<skill>`, for example `/beezi-dev-login`.
 
 Each variant gets its own data root (`~/.beezi-copilot-<env>`), secret-store service
 (`beezi-copilot-<env>`), update manifest and MCP server key.
@@ -421,8 +447,9 @@ marketplace manifest at `env.json` `updateManifestUrl`. The check runs at most o
 up after 1.5 seconds. Being offline, having no manifest URL and an unreadable manifest are all silent.
 The plugin never updates itself. When a newer version is published it prints one line with the
 commands: `copilot plugin marketplace update <marketplace>`, then `copilot plugin update <plugin>`
-(in the Copilot app: Customize → Plugins → Update), then start a new Copilot session.
-`/beezi-status` shows the same line.
+(in the Copilot app: Customize → Plugins → Update), then restart Copilot to apply it.
+`/beezi-status` lists the same steps, and `/beezi-release-notes` shows what changed in the installed
+version, the releases before it and, when a newer one is out, the same update commands.
 
 ## Coexistence
 

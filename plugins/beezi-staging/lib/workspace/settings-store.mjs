@@ -2,6 +2,9 @@
 import { mutateRow } from '../accounts/index-store.mjs';
 import { rulesOf, outsideKey } from './rule-model.mjs';
 import { UserError } from '../core/errors.mjs';
+import {
+  ruleRequestIds, removalRequestIds, newFoldersSendIds, gainedIds, requestHistory, noteAttempt, settleHistory, takeResults, SettleState,
+} from './pending-history.mjs';
 
 // Where repos and folders with no rule send: ask, send (to tenantIds) or none; returns the stored value.
 export function setNewFolders(key, { mode, tenantIds = [] } = {}, deps = {}) {
@@ -11,7 +14,9 @@ export function setNewFolders(key, { mode, tenantIds = [] } = {}, deps = {}) {
   const ids = Array.isArray(tenantIds) ? tenantIds.filter((id) => typeof id === 'string' && id !== '') : [];
   if (mode === 'send' && ids.length === 0) return Promise.reject(new UserError('Sending needs at least one workspace.'));
   return mutateRow(key, (row) => {
+    const before = newFoldersSendIds(row);
     row.newFolders = { mode, tenantIds: mode === 'send' ? ids : [] };
+    requestHistory(row, gainedIds(before, newFoldersSendIds(row)), new Date().toISOString());
     return row.newFolders;
   }, deps);
 }
@@ -39,6 +44,21 @@ export function markTenantsReviewed(key, ids, deps = {}) {
 // Workspaces the session-start notice already announced on this machine.
 export function markJoinNoticed(key, ids, deps = {}) {
   return addTenantIds(key, 'joinNoticedTenantIds', ids, deps);
+}
+
+// The history worker stamps the start of its pass on the entries it is about to run.
+export function notePendingAttempt(key, tenantIds, nowIso) {
+  return mutateRow(key, (row) => { noteAttempt(row, tenantIds, nowIso); });
+}
+
+// One workspace's run outcome, applied under the index lock (pending-history.mjs settleHistory).
+export function settlePendingHistory(key, tenantId, run, timing) {
+  return mutateRow(key, (row) => settleHistory(row, tenantId, run, timing)).catch(() => SettleState.MISSING);
+}
+
+// Removes and returns up to `limit` finished-upload results for the session-start notice.
+export function takeHistoryResults(key, limit = null) {
+  return mutateRow(key, (row) => takeResults(row, limit));
 }
 
 // Adds a routing rule, or replaces the tenantIds of the one with the same kind and match in place; returns its 1-based number.
@@ -71,6 +91,8 @@ export function setWorkspaceRule(key, { kind, match, label = null, tenantIds } =
       n = stored.length;
     }
     row.workspaceRules = stored;
+    // Every workspace the rule sends to is owed its history; the worker skips what it already has (pending-history.mjs).
+    requestHistory(row, ruleRequestIds(row, tenantIds), new Date().toISOString());
     return { index: n, rule };
   }, deps);
 }
@@ -82,6 +104,7 @@ export function removeWorkspaceRule(key, n, deps = {}) {
     const found = Number.isInteger(position) ? rulesOf(row).find((r) => r.index === position) : null;
     if (found == null) throw new UserError(`There is no rule ${n}. Run /beezi-staging-settings rules to list them.`);
     row.workspaceRules.splice(position - 1, 1);
+    requestHistory(row, removalRequestIds(row), new Date().toISOString());
     return found;
   }, deps);
 }

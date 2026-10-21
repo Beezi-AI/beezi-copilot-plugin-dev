@@ -54,8 +54,9 @@ function readBranches(gitImpl, root, platform) {
 }
 
 // beforeGit() runs ahead of every uncached git lookup (a long audit keeps its session lock fresh there).
+// A history run passes its run-wide `fastRoot` so repo roots resolve through the exact shortcut.
 // → { repoRootOf(dir), branchAt(root, ms), headBranchOf(root), resolveRemote(root), persist() }.
-export function createRepoContext(gitImpl, beforeGit, { platform = process.platform } = {}) {
+export function createRepoContext(gitImpl, beforeGit, { platform = process.platform, fastRoot = null } = {}) {
   const map = loadRepoMap();
   const rootCache = new Map();
   const remoteCache = new Map();
@@ -63,7 +64,7 @@ export function createRepoContext(gitImpl, beforeGit, { platform = process.platf
   let dirty = false;
   const repoRootOf = (dir) => {
     beforeGit();
-    return resolveRepoRoot(gitImpl, dir, rootCache, map);
+    return resolveRepoRoot(gitImpl, dir, rootCache, map, fastRoot);
   };
   const branchEntry = (root) => {
     let entry = timelineCache.get(root);

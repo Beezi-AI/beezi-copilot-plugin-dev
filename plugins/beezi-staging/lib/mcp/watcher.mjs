@@ -16,6 +16,7 @@ import { planPass, applyHookStamps } from './watch-planner.mjs';
 import { recipientsFor, liveRecipients } from './watch-recipients.mjs';
 import { runDuePath, runFreshPath, runHistoryPath, failStep, messageOf } from './watch-paths.mjs';
 import { nextIdleSkip, shouldLogPass, summaryLine } from './watch-pacing.mjs';
+import { maybeStartPendingHistory } from '../history/pending-trigger.mjs';
 import { yieldToLoop } from '../core/async.mjs';
 
 // MCP-server session watcher: session-agnostic (the process has no session id), every report comes from the checkpoint engine, and it never touches stdout (JSON-RPC): all output goes through `log`.
@@ -164,6 +165,9 @@ async function runWatchPass(ctx) {
   if (stop == null && live && plan.fresh.length > 0) stop = await runFreshPath(pass, plan.fresh);
   if (stop == null && live && plan.quiet.length > 0 && alive()) stop = await runHistoryPath(pass, plan.quiet);
   if (stop != null) return finishPass(pass, stop);
+
+  // A rule that gained a workspace owes it its history: due accounts get the detached history worker, so the tick stays short.
+  if (alive()) await maybeStartPendingHistory();
 
   if (trimWatermark(record, new Set(pass.entries.map((entry) => entry.sessionId)))) pass.dirty = true;
   return finishPass(pass, null);

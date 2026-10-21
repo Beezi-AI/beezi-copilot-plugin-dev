@@ -7,9 +7,10 @@ export function fail(message) {
   process.exit(1);
 }
 
-// One history run, printing a progress line per parsed session.
-export function runHistory(options) {
-  return runAudit({ onProgress: (progress) => { console.log(progressLine(progress)); } }, options);
+// One history run printing a progress line per parsed session; runCache is the caller's shared git cache, deps.runAudit a seam.
+export function runHistory(options, runCache = null, deps = {}) {
+  const audit = deps.runAudit == null ? runAudit : deps.runAudit;
+  return audit({ runCache, onProgress: (progress) => { console.log(progressLine(progress)); } }, options);
 }
 
 // Prints the outcome's lines, then its error as a ✗ line on stderr; 1 when there was an error, else 0.

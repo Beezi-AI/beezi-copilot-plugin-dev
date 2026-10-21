@@ -53,7 +53,6 @@ export const ENDPOINTS = Object.freeze({
   sessionsCoverage: "/sessions/coverage",
   sessionErrors: "/sessions/errors",
   sessionsTimeline: "/sessions/timeline",
-  reposStatus: "/repos/status",
   whoami: "/me/copilot/whoami",
   machine: "/me/copilot/machine",
   usageSnapshot: "/me/copilot/usage",

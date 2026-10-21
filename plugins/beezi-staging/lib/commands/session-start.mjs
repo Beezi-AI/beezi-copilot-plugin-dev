@@ -27,10 +27,11 @@ import { readSessionWorkspace } from '../workspace/session-routes.mjs';
 import { expandTargets } from '../workspace/targets.mjs';
 import { isMultiTenant } from '../workspace/tenants.mjs';
 import { pendingAskSummary, pendingAskNotice } from '../ux/workspace-prompt.mjs';
-import { announceRepo, checkIn, deadlineTimer, localMaintenance } from '../pipeline/housekeeping.mjs';
+import { checkIn, deadlineTimer, localMaintenance } from '../pipeline/housekeeping.mjs';
 import { readUsageHold } from '../pipeline/usage-hold.mjs';
 import { healthSummary } from '../state/health-record.mjs';
 import { spawnDetached } from '../platform/spawn.mjs';
+import { maybeStartPendingHistory } from '../history/pending-trigger.mjs';
 import { scriptPath } from '../config/plugin-root.mjs';
 import { deliveryNotice, USAGE_HOLD_NOTICE } from '../ux/capture-health.mjs';
 import {
@@ -42,7 +43,6 @@ import {
   consentPrompt,
   correlationOffer,
   labelled,
-  targetLabel,
   trackingPolicyNotice,
 } from '../ux/session-notices.mjs';
 
@@ -60,14 +60,14 @@ function createRun(input, deps) {
   const notices = [];
   return {
     input, deps, budgetMs, fetchImpl, gitImpl, deadline, notices, several: false,
-    add: (kind, text, actionable = true) => { if (text) notices.push({ text, kind, actionable }); },
+    add: (kind, text) => { if (text) notices.push({ text, kind, actionable: true }); },
     // fetchImpl plus a timeout capped by what is left of the run.
     requestDeps: () => ({ fetchImpl, timeoutMs: Math.max(1, Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now())) }),
   };
 }
 
 // The notices for this session start: [{ text, kind, actionable }]. `kind` is auth | update | billing | policy |
-// consent | statusline | health | repo | targets | restart. The workspace ask and the relay of the most important notice
+// consent | statusline | health | targets | restart. The workspace ask and the relay of the most important notice
 // are placed by commands/session-start-hook.mjs, so additionalContext is always null here. Never throws for expected failures.
 export async function runSessionStart(input, deps = {}) {
   const run = createRun(input, deps);
@@ -106,6 +106,8 @@ async function accountNotices(run) {
   // Sessions left behind their file or owing a shutdown are checkpointed by a detached worker, never inside this hook. Spawned
   // before any network wait, so a run cut off at its deadline still leaves it; the worker takes its own lock.
   spawnDetached(scriptPath('catch-up-worker.mjs'), { spawnImpl: run.deps.spawnImpl }, [input.session_id]);
+  // Retries history uploads that are due, one detached worker per account; it never throws.
+  await maybeStartPendingHistory({ spawnImpl: run.deps.spawnImpl });
   // Only this session's own choice scopes requests; the row's web-side tenantId never does.
   const workspaceState = readSessionWorkspace(input.session_id);
   const sessions = (await Promise.all(rows.map((row) => verifyAccount(row, run)))).filter(Boolean);
@@ -115,7 +117,7 @@ async function accountNotices(run) {
   const reconciled = await reconcileBilling();
   // Fire-and-forget: the account check-in is never awaited past the deadline.
   checkIn(targetSessions, { config: reconciled.config, outcome: reconciled.outcome, via: 'session-start', fetchImpl: run.fetchImpl });
-  await flushAndAnnounce(run, sessions, targetSessions);
+  await flushQueues(run, sessions);
   localMaintenance({ cwd: input.cwd, gitImpl: run.gitImpl, accountKeys: rows.map((row) => row.key) });
 
   if (liveSessions.length > 0) addLiveNotices(run, reconciled);
@@ -213,16 +215,9 @@ async function reconcileBilling() {
   return reconciled;
 }
 
-// Flushes every verified account's queue while each target announces whether this repo is connected.
-async function flushAndAnnounce(run, sessions, targetSessions) {
-  const [, announcements] = await Promise.all([
-    Promise.all(sessions.map((s) => flushQueue(s, { fetchImpl: run.fetchImpl, deadline: run.deadline }).catch(() => null))),
-    Promise.all(targetSessions.map(async (s) => {
-      const line = await announceRepo(run.input.cwd, s, run.requestDeps(), run.gitImpl);
-      return line == null ? null : labelled(line, targetLabel(s, run.several));
-    })),
-  ]);
-  for (const line of announcements) run.add('repo', line, false);
+// Flushes every verified account's queue; nothing asks whether the repo is connected (its answer was never relayed).
+async function flushQueues(run, sessions) {
+  await Promise.all(sessions.map((s) => flushQueue(s, { fetchImpl: run.fetchImpl, deadline: run.deadline }).catch(() => null)));
 }
 
 // Notices for a machine that tracks live sessions: billing record changes, an unknown plan, a detached status line.

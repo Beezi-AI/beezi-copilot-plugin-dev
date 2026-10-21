@@ -57,7 +57,15 @@ export function newResult() {
     lastError: null,
     // Ids with a final answer for now (accepted, partial, rejected, empty, noRemote, oversize); deferred, failed and unreadable are excluded.
     settledIds: [],
+    // Sessions skipped as live or active, as { sessionId, path }: the history worker waits on the ones older than its request.
+    recent: [],
   };
+}
+
+// A finished run with no refusal, halt, failed report or session left unproven for lack of coverage (none can be eligible without it).
+export function isCleanSync(result) {
+  if (result.ok !== true || result.reason != null || result.halt != null) return false;
+  return !(result.reportsFailed > 0) && !(result.deferredUnavailable > 0);
 }
 
 export const sum = (list, pick) => list.reduce((total, item) => total + (typeof pick(item) === 'number' ? pick(item) : 0), 0);

@@ -1,6 +1,6 @@
 ---
 name: beezi-staging-status
-description: Show whether this machine is linked to Beezi and whether Copilot sessions are being captured — accounts, sign-in health, Beezi API, Copilot plan, which hooks fire, the session watcher, status line, crash reports and plugin updates. Use when the user asks whether they are linked to Beezi, which Beezi account is used, or why their Beezi analytics look empty.
+description: Show whether this machine is linked to Beezi and whether Copilot sessions are being captured — accounts, sign-in health, where this folder's analytics go, Beezi API, Copilot plan, which hooks fire, the session watcher, status line, crash reports, and the plugin version with how to update it. Use when the user asks whether they are linked to Beezi, which Beezi account is used, or why their Beezi analytics look empty.
 allowed-tools: shell(node:*)
 ---
 
@@ -30,7 +30,12 @@ Answer follow-up questions from those lines only:
   (normal on VS Code Agent Host). Hooks not seen and no watcher means sessions are not being
   captured: suggest /restart; if hooks stay silent, `disableAllHooks` or an organization policy that
   allows managed hooks only is the likely cause.
-- An update line names the exact commands; relay it as written.
+- `This repo`, `This folder` or `Here` says where this folder's analytics go for that account and
+  why; rules are changed with /beezi-staging-settings rules.
+- When a newer plugin is out, `To update to …` lists the exact steps; relay them as written.
 
-This skill changes nothing. The default account is changed with /beezi-staging-settings account; crash
-reports and the status line with /beezi-staging-settings.
+This skill changes nothing. Never run the commands it names yourself (/beezi-staging-login, /beezi-staging-settings,
+/plugin): the user runs them when they want to. Never run the update commands it prints either, even
+if the user asks in this same message: updating replaces the plugin under the running session, so the
+user runs them (and restarts Copilot) on their own. The default account is changed with
+/beezi-staging-settings account; crash reports and the status line with /beezi-staging-settings.

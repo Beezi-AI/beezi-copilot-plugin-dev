@@ -1,8 +1,8 @@
-import { listAccounts, getDefaultKey } from '../accounts/index-store.mjs';
+import { AccountStatus, listAccounts, getDefaultKey } from '../accounts/index-store.mjs';
 import { accountHealth } from './account-health.mjs';
 import { friendlyMessage } from '../core/errors.mjs';
 import { apiBase } from '../config/api.mjs';
-import { readTrackingState, TrackingMode } from '../state/tracking.mjs';
+import { isTenantDark, readTrackingState, TrackingMode } from '../state/tracking.mjs';
 import { billingStatus, planLabel } from '../billing/plan-resolution.mjs';
 import { readBillingConfig } from '../billing/billing-config.mjs';
 import { IdentityStatus } from '../sources/cli/copilot-identity.mjs';
@@ -11,12 +11,12 @@ import { statuslineInstalled } from '../statusline/install.mjs';
 import { readHooksSeen } from '../state/hooks-seen.mjs';
 import { readJson } from '../platform/fs-store.mjs';
 import { copilotSettingsFile } from '../config/copilot-paths.mjs';
-import { checkForUpdate, readLocalPlugin } from './update-check.mjs';
-import { tenantById, tenantsOf, roleLabel, isMultiTenant, isSingleTenant } from '../workspace/tenants.mjs';
-import { currentSessionWorkspace } from '../workspace/session-routes.mjs';
-import { routeForDir } from '../workspace/routing.mjs';
+import { pluginInfo, pluginText, readLatest, readLocalPlugin, updateSteps } from './update-check.mjs';
+import { tenantById, tenantsOf, roleLabel, isMultiTenant, joinTenantNames } from '../workspace/tenants.mjs';
+import { choiceDir, readSessionWorkspace, resolveSession } from '../workspace/session-routes.mjs';
+import { resolveSessionId } from '../host/session-resolver.mjs';
+import { placeOfDir, routeOfDir, routeText } from '../workspace/route-describe.mjs';
 import { createRouteContext } from '../workspace/route-key.mjs';
-import { shortLabel } from '../workspace/rule-model.mjs';
 import { pendingAskSummary, pendingAskNotice } from './workspace-prompt.mjs';
 import { pluginRoot } from '../config/plugin-root.mjs';
 import { isWatcherEnabled } from '../config/flags.mjs';
@@ -31,6 +31,7 @@ import {
 } from './capture-health.mjs';
 
 const LABEL_WIDTH = 16;
+const PLACE_LABELS = { repo: 'This repo', folder: 'This folder', outside: 'Here' };
 const PLAN_SOURCE_TEXT = Object.freeze({ declared: 'declared by you', observed: 'read from Copilot', none: 'not known yet' });
 export const UNKNOWN_PLAN_TEXT = 'unknown — tell Beezi in /beezi-staging-settings refresh';
 
@@ -166,23 +167,38 @@ function hooksText(seen, watcher, now) {
     : 'not seen on this machine yet';
 }
 
-// A one-workspace account's `[]` rule covering the current folder, as "<short> is not tracked (R<n>)"; else null.
-function excludedHere(row) {
+// Why a tracked route still sends nothing live: a one-workspace account's audit or off mode, or a multi-workspace target that answered TRACKING_DISABLED.
+export function liveOffNote(row, tracking, route) {
+  if (route.ids.length === 0) return null;
+  if (isMultiTenant(row)) {
+    const dark = route.ids.filter((id) => isTenantDark(tracking, id));
+    return dark.length === 0 ? null : `analytics are off in ${joinTenantNames(row, dark)}`;
+  }
+  const mode = tracking == null ? null : tracking.trackingMode;
+  if (mode === TrackingMode.BACKFILL_ONLY) return 'new sessions are not tracked (audit mode)';
+  if (mode === TrackingMode.DISABLED) return 'analytics are off for this workspace';
+  return null;
+}
+
+// "labacus-suite → Acme (default)" under its place's label, with the note when nothing goes live; null for a revoked
+// account, an unknown place or unknown workspaces, or when the route cannot be read (only this account's line drops).
+export function placeField(row, dir, ctx, tracking) {
+  if (row.status === AccountStatus.REVOKED) return null;
   try {
-    if (!isSingleTenant(row)) return null;
-    // The session's own folder, as settings.mjs resolves it: the MCP server's process cwd is not the user's.
-    const state = currentSessionWorkspace();
-    const dir = state != null && state.cwd != null ? state.cwd : process.cwd();
-    const route = routeForDir(row, dir, createRouteContext());
-    if (route == null || route.tenantIds.length !== 0) return null;
-    return `${shortLabel(route)} is not tracked (R${route.index})`;
+    const place = placeOfDir(dir, ctx);
+    if (place == null) return null;
+    const route = routeOfDir(row, dir, ctx);
+    if (route.reason.kind === 'unknown') return null;
+    const where = place.kind === 'outside' ? 'sessions outside a project' : place.short;
+    const off = liveOffNote(row, tracking, route);
+    return field(PLACE_LABELS[place.kind] || 'Here', `${where} ${routeText(row, route)}${off == null ? '' : `, but ${off}`}`);
   } catch {
     return null;
   }
 }
 
 // The accounts block: one heading per linked account, or the not-linked line.
-async function accountLines(budgetMs, now) {
+async function accountLines(budgetMs, now, here) {
   let accounts;
   try {
     accounts = await listAccounts();
@@ -206,20 +222,31 @@ async function accountLines(budgetMs, now) {
   const def = await getDefaultKey().catch(() => null);
   const several = rows.length > 1;
   const out = [];
-  rows.forEach((row, i) => {
-    if (i > 0) out.push('');
-    out.push(`Beezi · ${row.email || row.name || 'linked account'}${several && row.key === def ? ' (default)' : ''}`);
-    const h = health[row.key];
-    out.push(h != null && !h.ok && h.lines.length > 0 ? signInField(h.lines) : field('Sign-in', 'OK'));
-    const tenants = tenantsOf(row) || [];
-    if (tenants.length > 0) out.push(field(tenants.length > 1 ? 'Workspaces' : 'Workspace', workspaceList(row)));
-    // A multi-workspace account's cached mode describes the web-side workspace, not where sessions go.
-    if (!isMultiTenant(row)) out.push(field('Tracking', trackingText(row.key)));
-    const excluded = excludedHere(row);
-    if (excluded != null) out.push(field('This folder', excluded));
-    out.push(...accountCaptureLines(row.key, now));
+  rows.forEach((row) => {
+    let block;
+    try {
+      block = accountBlock(row, { isDefault: several && row.key === def, health: health[row.key], now, here });
+    } catch {
+      // One unreadable account drops only its own lines.
+      return;
+    }
+    if (out.length > 0) out.push('');
+    out.push(...block);
   });
   return out;
+}
+
+// One account's heading and fields; `isDefault` marks the default among several.
+function accountBlock(row, { isDefault, health: h, now, here }) {
+  const out = [`Beezi · ${row.email || row.name || 'linked account'}${isDefault ? ' (default)' : ''}`];
+  out.push(h != null && !h.ok && h.lines.length > 0 ? signInField(h.lines) : field('Sign-in', 'OK'));
+  const tenants = tenantsOf(row) || [];
+  if (tenants.length > 0) out.push(field(tenants.length > 1 ? 'Workspaces' : 'Workspace', workspaceList(row)));
+  // A multi-workspace account's cached mode describes the web-side workspace, not where sessions go.
+  if (!isMultiTenant(row)) out.push(field('Tracking', trackingText(row.key)));
+  const place = placeField(row, here.dir, here.ctx, readTrackingState(row.key));
+  if (place != null) out.push(place);
+  return out.concat(accountCaptureLines(row.key, now));
 }
 
 // Machine facts read from other stores, each bounded by budgetMs: { perCall, policy, nonLocal } (null when unread).
@@ -240,13 +267,34 @@ function pushCaptureLines(machine, facts, usageHold) {
   optional('Copilot app', nonLocalText(facts.nonLocal));
 }
 
+// The folder this session runs in, by the same resolution settings uses; with `ownCwd` false (the MCP server, whose cwd
+// is not the user's) only the folder recorded for the session the env names exactly, never a newest or same-cwd guess.
+function sessionDir(ownCwd) {
+  try {
+    if (ownCwd) return choiceDir(resolveSession(null).state);
+    const found = resolveSessionId({ env: process.env, cwd: process.cwd() });
+    if (found == null || found.source !== 'env' || found.ambiguous) return null;
+    const state = readSessionWorkspace(found.sessionId);
+    return state != null && state.cwd != null ? state.cwd : null;
+  } catch {
+    return ownCwd ? process.cwd() : null;
+  }
+}
+
 // User-facing status lines for /beezi-staging-status and the beezi_status tool. Never a token, key or credential path;
 // never prints; never throws. `budgetMs` bounds the sign-in checks, the store reads and the update lookup.
 // `usageHold` is the caller's readUsageHold() answer (the flag lives with the pipeline), or null.
-export async function buildStatusReport({ budgetMs = 8000, usageHold = null } = {}) {
+// `ownCwd` false falls back to no folder instead of this process's cwd. `dir`, `ctx` and `update` (readLatest's deps)
+// replace the session folder, the route context and the update reading (tests).
+export async function buildStatusReport({
+  budgetMs = 8000, usageHold = null, ownCwd = true, dir = null, ctx = null, update = {},
+} = {}) {
   const now = Date.now();
   const factsPromise = captureFacts(budgetMs).catch(() => ({ perCall: null, policy: null, nonLocal: null }));
-  const out = await accountLines(budgetMs, now).catch(() => ['Beezi · status could not be read.']);
+  const unread = { local: readLocalPlugin(update), record: null, stale: false };
+  const latestPromise = within(readLatest(update), budgetMs, unread);
+  const here = { dir: dir == null ? sessionDir(ownCwd) : dir, ctx: ctx == null ? createRouteContext() : ctx };
+  const out = await accountLines(budgetMs, now, here).catch(() => ['Beezi · status could not be read.']);
   try {
     const pending = pendingAskNotice(await pendingAskSummary());
     if (pending != null) out.push('', pending);
@@ -263,11 +311,10 @@ export async function buildStatusReport({ budgetMs = 8000, usageHold = null } = 
   attempt('Status line', () => (statuslineInstalled() ? 'On' : 'Off'));
   attempt('Crash reports', () => crashText(crashMode()));
   pushCaptureLines(machine, await factsPromise, usageHold);
-  const local = readLocalPlugin();
-  if (local != null) machine.push(field('Plugin', `${local.name} ${local.version}`));
-  const nudge = await within(Promise.resolve().then(() => checkForUpdate()), budgetMs, null);
-  if (nudge != null) machine.push(field('Update', nudge));
+  const plugin = pluginInfo(await latestPromise);
+  machine.push(field('Plugin', pluginText(plugin)));
   // The skills look for this line by its colon when `${PLUGIN_ROOT}` is not expanded in a skill body.
   machine.push(field('Plugin root:', pluginRoot()));
-  return out.concat(machine);
+  const steps = updateSteps(plugin);
+  return out.concat(machine, steps.length > 0 ? [''].concat(steps) : []);
 }
