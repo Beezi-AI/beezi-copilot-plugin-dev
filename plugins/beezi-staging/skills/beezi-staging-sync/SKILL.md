@@ -99,9 +99,11 @@ accounts and the choice numbers are not: preserve each printed `J` number to mat
 use a choice number to look up a `J<i>-command`.
 
 For each picked `J` line, run its `J<i>-command=` text EXACTLY ONCE, changing only the final
-`<tenant>`: that workspace's `tenant=` value inside single quotes, like `'<id>'`. "None of these",
-alone or with other choices, wins: run no `J<i>-command` for that question (it still counts as an
-answer). An empty or unmatched answer, or a dismissed question, is no answer and runs nothing.
+`<tenant>`: that workspace's `tenant=` value inside single quotes, like `'<id>'`. "None of these"
+stands alone: as the whole answer it runs no `J<i>-command` and still counts as an answer. An answer
+with "None of these" together with a repo runs nothing and is not an answer: ask the same question
+once more, starting with `"None of these" can't be combined with repos — pick one or the other.` A
+second mixed answer is a dismissal. An empty or unmatched answer, or a dismissed question, is no answer and runs nothing.
 After every new workspace's question has been answered, run the `done-command=` text EXACTLY ONCE;
 otherwise run no `done-command`, and the next login or sync asks again. Never rebuild a command or re-quote its path. Write each command's first
 line verbatim.
@@ -139,8 +141,11 @@ For each account with `P` lines (with several accounts, end every question with 
   sessions outside a project folder is sent" for `outside`).
 
 For each answered `P` line run its `P<i>-command=` text EXACTLY ONCE, changing only the final
-`<tenants>`: the chosen `tenant=` values joined by commas inside one pair of single quotes, like `'<id>,<id>'`, or `none` when the last choice was picked
-(it wins). Never rebuild a command or re-quote its path. Write each command's first line verbatim.
+`<tenants>`: the chosen `tenant=` values joined by commas inside one pair of single quotes, like `'<id>,<id>'`, or `none` when the last choice is the whole answer.
+The last choice stands alone: when an answer has it together with a workspace, run nothing and ask
+the same question once more, starting with `"Don't track" can't be combined with a workspace — pick one or the other.` A second
+mixed answer is a dismissal. Never rebuild a command or re-quote its path. Write each command's first
+line verbatim.
 
 Step 2 — sync. When the last listing printed `review=0`, the sync already ran: its output is
 everything after that `review=0` line, so write it verbatim as your reply text and run nothing more.

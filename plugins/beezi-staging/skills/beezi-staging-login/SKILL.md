@@ -123,24 +123,33 @@ The `<setup account="<key>">` block is for you only: one `W. <workspace> account
 role=<role>` line per workspace, then `sessions=<N> places=<M>` (the past sessions the history upload
 would send, and the repos and folders they ran in) or a `✗` line when they could not be counted (write
 it verbatim), then the choices as `O<i>. <label> — <description>` lines. `O<i>` for `i` up to the
-number of `W.` lines is the `i`-th `W.` line's workspace; the last `O` line is "Let me choose per repo".
+number of `W.` lines is the `i`-th `W.` line's workspace; the next `O` line is "Several workspaces…" and
+the last `O` line is "Let me choose per repo".
 
 Ask "Where should analytics from this machine go?" with one choice per `O` line, in order: its text
 after `O<i>. `, exactly. In `mode=argument-only`, write that question and the same choices as a
-numbered list instead, stop, and tell the user to run `/beezi-staging-login <n>` with the number of their
-choice.
+numbered list instead, leaving out the "Several workspaces…" line: numbered 1, 2, … in order, so the
+last number is "Let me choose per repo". Stop, and tell the user to run `/beezi-staging-login <n>` with the
+number of their choice.
 
 Answer by number (the arguments were one whole number `<n>`): after Step 0, take `<key>` from the
 `<setup account="<key>">` block an earlier run printed in this conversation; when there is none, say
 the number answers nothing here and start at Step 1 instead. Run
 `node "<plugin-root>/scripts/login-flow.mjs" --account <key> --from setup`. When it ends with
-`next=setup`, the answer is its new block's `O<n>` line (a number with no `O` line is a dismissal):
-ask nothing and go on below. Otherwise the setting was made meanwhile: follow its `next=` line.
+`next=setup`, the answer is the `<n>`-th choice of that same list (the `O` lines without "Several
+workspaces…"); a number past the list is a dismissal: ask nothing and go on below. Otherwise the
+setting was made meanwhile: follow its `next=` line.
 
 Then, by the answer:
 - a workspace → run EXACTLY, with that `W.` line's `tenant=` value (the template already single-quotes
   it, so PowerShell keeps it one argument):
   `node "<plugin-root>/scripts/workspace.mjs" new-folders send '<id>' --account <key> --defer-upload`
+- "Several workspaces…" → ask "Which workspaces should get analytics from this machine?" (several
+  allowed, one choice per `W.` line: the workspace name — its `role=` value, or "Beezi workspace" when
+  empty). End the question with " You can pick more than one: type their numbers separated by
+  commas." Run EXACTLY, with the chosen `tenant=` values joined by commas (one chosen workspace is fine):
+  `node "<plugin-root>/scripts/workspace.mjs" new-folders send '<id>,<id>' --account <key> --defer-upload`
+  An empty, unmatched or dismissed answer runs nothing, and the next login asks again.
 - "Let me choose per repo" → run EXACTLY `node "<plugin-root>/scripts/workspace.mjs" new-folders ask --account <key> --defer-upload`
 - a dismissal, or a question skipped → run nothing; the next login asks again.
 
@@ -162,11 +171,13 @@ allowed), by its `kind=`:
 Choices: one per `W.` line of the block (name — role, or "Beezi workspace"), then the last choice —
 "Not tracked: nothing from <short> is sent" ("Not tracked: nothing from sessions outside a project
 folder is sent" for `outside`). Run EXACTLY, with `<ids>` = the chosen `tenant=` values joined by
-commas, or `none` when the last choice was picked (it wins):
+commas, or `none` when the last choice is the whole answer:
 
 `node "<plugin-root>/scripts/workspace.mjs" rule add --current --account <key> --defer-upload '<ids>'`
 
-and write its first line verbatim. Nothing chosen or a skipped question runs nothing. Then carry on
+and write its first line verbatim. The last choice stands alone: when an answer has it together with a workspace, run nothing and ask the
+same question once more, starting with `"Don't track" can't be combined with a workspace — pick one or the other.`
+A second mixed answer is a dismissal. Nothing chosen or a skipped question runs nothing. Then carry on
 with `--from plan`. Steps 2–4 pick their workspaces themselves; pass no `--tenant`.
 
 Step 2 — the Copilot plan. The `<capture>` block is
@@ -264,9 +275,11 @@ these goes to <name>". Preserve each printed `J` number to match its command; ne
 number to look up a `J<i>-command`.
 
 For each picked `J` line, run its `J<i>-command=` text EXACTLY ONCE, changing only the final
-`<tenant>`: that workspace's `tenant=` value inside single quotes, like `'<id>'`. "None of these",
-alone or with other choices, wins: run no `J<i>-command` for that question (it still counts as an
-answer). An empty or unmatched answer, or a dismissed question, is no answer and runs nothing.
+`<tenant>`: that workspace's `tenant=` value inside single quotes, like `'<id>'`. "None of these"
+stands alone: as the whole answer it runs no `J<i>-command` and still counts as an answer. An answer
+with "None of these" together with a repo runs nothing and is not an answer: ask the same question
+once more, starting with `"None of these" can't be combined with repos — pick one or the other.` A
+second mixed answer is a dismissal. An empty or unmatched answer, or a dismissed question, is no answer and runs nothing.
 After every new workspace's question has been answered, run the `done-command=` text EXACTLY ONCE;
 otherwise run no `done-command`, and the next login or sync asks again. Never rebuild a command or re-quote its path. Write each command's first
 line verbatim. Then carry on with `--from routes`.
@@ -298,8 +311,10 @@ go?" ending with "Don't track these". Choices: one per `W.` line (name — role,
 then that last choice — "Not tracked: nothing from <short> is sent" ("Not tracked: nothing from
 sessions outside a project folder is sent" for `outside`). For each answered `P` line run its `P<i>-command=` text EXACTLY ONCE, changing
 only the final `<tenants>`: the chosen `tenant=` values joined by commas inside one pair of single quotes, like `'<id>,<id>'`, or `none` when the last
-choice was picked (it wins). Never rebuild a command or re-quote its path. Write each command's first
-line verbatim. Then go to Step 5b.
+choice is the whole answer. The last choice stands alone: when an answer has it together with a workspace, run nothing and ask the same
+question once more, starting with `"Don't track" can't be combined with a workspace — pick one or the other.`
+A second mixed answer is a dismissal. Never rebuild a command or re-quote its path. Write each
+command's first line verbatim. Then go to Step 5b.
 
 Step 5b — upload past sessions. This is always the last step. Run EXACTLY, with no other flags:
 

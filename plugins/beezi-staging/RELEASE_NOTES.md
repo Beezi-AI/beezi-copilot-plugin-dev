@@ -1,5 +1,15 @@
 # Beezi plugin release notes
 
+## 0.1.94 (2026-10-22) — Pick several workspaces, and no silent drops
+
+### Improved
+- **Several workspaces for this machine** — "Where should analytics from this machine go?" in `/beezi-staging-login` and the terminal setup has a "Several workspaces…" choice that sends everything to each workspace you pick.
+- **Several workspaces at session start** — the question about a new repo or folder says you can type several workspace names.
+
+### Fixed
+- **"Don't track" stands alone** — picking "Don't track" together with a workspace no longer saves "not tracked" and drops the workspace. The terminal setup clears the other ticks, and Copilot asks again.
+- **"None of these" stands alone** — picking "None of these" together with repos for a workspace you joined no longer drops those repos and marks the join reviewed.
+
 ## 0.1.93 (2026-10-21) — Clearer settings, a status-line badge and one-question sign-in
 
 ### New

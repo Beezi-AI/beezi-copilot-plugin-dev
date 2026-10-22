@@ -16,6 +16,8 @@ import { sessionFor } from '../auth/recipients.mjs';
 // Only a new session asks; resume never does (Copilot has no clear or compact source).
 export const ASK_SOURCES = ['startup', 'new'];
 const ALL_LABEL = 'All of these workspaces';
+const SEVERAL_LINE = 'You can pick more than one: type their names separated by commas.';
+const DONT_TRACK_MIXED = '"Don\'t track" can\'t be combined with a workspace — pick one or the other.';
 // With no autopilot signal at all the ask cannot be told from an auto-answered one, so it relays a line instead.
 const RELAY_TEXT = 'Tell the user in one line: "Beezi is holding this folder\'s analytics until you choose a workspace. Run /beezi-staging-settings rules."';
 
@@ -95,14 +97,14 @@ function choiceList(choices) {
 
 // One account's single-choice question and the command its answer runs. ask_user choices are
 // plain strings with no descriptions or multi-select, so several workspaces go through "All of these workspaces"
-// or a typed comma list, which the CLI resolves by id, name or position and refuses when unknown.
+// or typed names, which the question invites and the CLI resolves by id, name or position and refuses when unknown.
 function accountAsk(row, resolved, place, { sessionId, root, several }) {
   const tenants = resolved.tenants.filter((t) => resolved.askTenants.indexOf(t.id) !== -1);
   const label = (t) => inline(t.name ? t.name : t.id);
   const choices = tenants.map(label).concat([ALL_LABEL, place.dontTrack]);
   return {
     row,
-    question: several ? `${place.question} (${emailOf(row)})` : place.question,
+    question: `${place.question}${several ? ` (${emailOf(row)})` : ''} ${SEVERAL_LINE}`,
     choices,
     command: `node "${root}/scripts/workspace.mjs" rule add --current --session ${sessionId} --account ${row.key} '<ids>'`,
     ids: tenants.map((t) => `${label(t)} = ${inline(t.id)}${inline(roleLabel(t)) ? ` (${inline(roleLabel(t))})` : ''}`).join(', '),
@@ -117,7 +119,8 @@ function promptText(asks) {
     const lead = several ? `For ${emailOf(ask.row)}, use` : 'Use';
     return `${lead} the ask_user tool to ask: "${ask.question}" with the choices ${choiceList(ask.choices)}.`
       + ` Then run exactly \`${ask.command}\`. \`<ids>\` is the chosen workspace's id (${ask.ids}), \`${ask.allIds}\` when "${ALL_LABEL}" is chosen,`
-      + ` the workspace names unchanged when the user types several separated by commas, or \`none\` when "${ask.dontTrack}" is chosen; it wins over the others.`
+      + ` the workspace names unchanged when the user types several separated by commas, or \`none\` when "${ask.dontTrack}" is the whole answer.`
+      + ` When the answer has "${ask.dontTrack}" together with a workspace, run nothing and ask the same question once more, starting with ${DONT_TRACK_MIXED} A second mixed answer is a dismissal.`
       + ` Before running it, escape each ' inside '<ids>' for the shell you run it in: '\\'' in bash or sh, '' in PowerShell, where each ‘ ’ ‚ ‛ is doubled too.`;
   });
   const head = 'Before doing anything else, ask the user where these analytics go.'

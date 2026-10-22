@@ -31,7 +31,7 @@
       "name": "beezi-staging",
       "source": "./plugins/beezi-staging",
       "description": "Reports GitHub Copilot session token and AI-credit analytics to Beezi, attributed to repo and branch, and adds the Beezi MCP tools. — staging environment build.",
-      "version": "0.1.93-staging.5922",
+      "version": "0.1.94-staging.5932",
       "author": {
         "name": "Beezi"
       },
