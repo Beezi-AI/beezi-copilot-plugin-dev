@@ -6,11 +6,10 @@ const DONT_TRACK = {
   folder: "Don't track this folder",
   outside: "Don't track these",
 };
-const NEW_FOLDER_OPTIONS = [
-  { label: 'Ask me (recommended)', description: 'Beezi asks once per repo or folder, when a session starts there' },
-  { label: 'Send to…', description: 'Pick the workspaces that get them' },
-  { label: "Don't send", description: 'Nothing from a repo or folder with no rule is uploaded' },
-];
+const SETUP_QUESTION = 'Where should analytics from this machine go?';
+const PER_REPO = { label: 'Let me choose per repo', description: 'Beezi asks about each repo and folder with history next, and new ones when a session starts there' };
+export const SEVERAL = { label: 'Several workspaces…', description: 'Pick two or more; everything goes to each of them' };
+export const SEVERAL_QUESTION = 'Which workspaces should get analytics from this machine?';
 const LABEL_END = /\), \d+ sessions?\b/;
 const PLAIN_PLACE = /^(.*?), \d+ sessions?\b/;
 const NO_FOLDER = /^\d+ other past sessions? ha(?:s|ve) no recorded folder and (?:is|are) not sent\.$/;
@@ -84,13 +83,17 @@ export function workspaceOptions(workspaces) {
 
 export function placeOptions(place, workspaces) {
   const nothing = place.kind === 'outside'
-    ? 'Nothing from sessions outside a project folder is uploaded'
-    : `Nothing from ${place.short} is uploaded`;
+    ? 'Not tracked: nothing from sessions outside a project folder is sent'
+    : `Not tracked: nothing from ${place.short} is sent`;
   return workspaceOptions(workspaces).concat([{ label: DONT_TRACK[place.kind], description: nothing }]);
 }
 
+// 'none' only when Don't track is the whole pick; a mix is a programming error the prompt prevents.
 export function tenantsArg(picked, workspaces) {
-  if (picked.indexOf(workspaces.length) !== -1) return 'none';
+  if (picked.indexOf(workspaces.length) !== -1) {
+    if (picked.length === 1) return 'none';
+    throw new Error("Don't track was combined with a workspace");
+  }
   return picked.map((i) => workspaces[i].tenant).join(',');
 }
 
@@ -112,20 +115,44 @@ async function runAndReport(ctx, argv) {
   report(ctx, await ctx.run('workspace', argv));
 }
 
+const plural = (n, one, many) => (n === 1 ? `1 ${one}` : `${n} ${many}`);
+
+// The `history=<N> places=<M>` counts, or null when the line is missing or malformed.
+export function parseHistory(text) {
+  const line = lastLine(text, /^history=/);
+  const found = line === null ? null : /^history=(\d+) places=(\d+)$/.exec(line.trimEnd());
+  return found ? { sessions: Number(found[1]), places: Number(found[2]) } : null;
+}
+
+// One option per workspace, each sending everything there, then the several-workspaces and per-repo options.
+export function setupOptions(workspaces, history) {
+  const sessions = history === null ? '' : plural(history.sessions, 'past session', 'past sessions');
+  let description = 'Everything goes here, starting with new repos and folders';
+  if (history !== null && history.sessions > 0) {
+    description = history.places > 0
+      ? `Everything goes here: new repos and folders, and ${history.places} with history (${sessions})`
+      : `Everything goes here: new repos and folders, and ${sessions}`;
+  }
+  return workspaces.map((w) => ({ label: w.name, description })).concat([SEVERAL, PER_REPO]);
+}
+
+// One question: a workspace, several workspaces (a follow-up multi-pick), or per repo; a dismissed follow-up runs nothing.
 export async function askNewFolders(ctx, key) {
-  const listing = await ctx.run('workspace', ['new-folders', '--account', key, DEFER]);
+  const listing = await ctx.run('workspace', ['new-folders', '--history', '--account', key, DEFER]);
   if (listing.code !== 0) {
     report(ctx, listing);
     return;
   }
   const last = lastLine(listing.stdout, /^new-folders=/);
-  if (last === null || token(last, 'set') !== 'no') return;
-  const choice = await ctx.ask.choose('Where should analytics go for repos and folders with no rule yet?', NEW_FOLDER_OPTIONS, { defaultIndex: 0 });
-  if (choice === 0) await runAndReport(ctx, ['new-folders', 'ask', '--account', key, DEFER]);
-  if (choice === 2) await runAndReport(ctx, ['new-folders', 'none', '--account', key, DEFER]);
-  if (choice !== 1) return;
+  if (last === null || token(last, 'set') !== 'no' || token(last, 'multi') !== 'yes') return;
   const workspaces = parseWorkspaces(listing.stdout);
-  const picked = await ctx.ask.chooseMany('Which workspaces should get analytics for repos and folders with no rule?', workspaceOptions(workspaces));
+  const choice = await ctx.ask.choose(SETUP_QUESTION, setupOptions(workspaces, parseHistory(listing.stdout)), { defaultIndex: 0 });
+  if (choice === null) return;
+  if (choice === workspaces.length + 1) {
+    await runAndReport(ctx, ['new-folders', 'ask', '--account', key, DEFER]);
+    return;
+  }
+  const picked = choice === workspaces.length ? await ctx.ask.chooseMany(SEVERAL_QUESTION, workspaceOptions(workspaces)) : [choice];
   if (picked === null || picked.length === 0) return;
   await runAndReport(ctx, ['new-folders', 'send', tenantsArg(picked, workspaces), '--account', key, DEFER]);
 }
@@ -133,7 +160,8 @@ export async function askNewFolders(ctx, key) {
 // One question per place; a place with an empty or dismissed pick gets no rule.
 async function askPerPlace(ctx, key, places, workspaces) {
   for (let i = 0; i < places.length; i += 1) {
-    const picked = await ctx.ask.chooseMany(placeQuestion(places[i], i + 1, places.length), placeOptions(places[i], workspaces));
+    const question = placeQuestion(places[i], i + 1, places.length);
+    const picked = await ctx.ask.chooseMany(question, placeOptions(places[i], workspaces), { exclusive: [workspaces.length] });
     if (picked !== null && picked.length > 0) await runAndReport(ctx, ruleArgv(places[i], key, tenantsArg(picked, workspaces)));
   }
 }
@@ -144,7 +172,7 @@ function joinedNames(text, workspaces) {
   return workspaces.filter((w) => w.isNew).map((w) => w.name).join(', ');
 }
 
-// One multi-select per screen of up to 4 places, ending in "None of these", which wins; each other pick extends the
+// One multi-select per screen of up to 4 places, ending in the exclusive "None of these"; each other pick extends the
 // place to this tenant via joined pick. False when a screen gets an empty pick or is dismissed, which stops the asking.
 async function askReposForTenant(ctx, key, tenant, places) {
   const name = tenant.name ? tenant.name : tenant.tenant;
@@ -154,7 +182,8 @@ async function askReposForTenant(ctx, key, tenant, places) {
     const batch = places.slice(i, i + 4);
     const part = parts > 1 ? ` (part ${i / 4 + 1} of ${parts})` : '';
     const options = batch.map((p) => ({ label: p.short, description: p.where === 'no rule yet' ? 'No rule yet' : `Now: ${p.where}` })).concat([none]);
-    const picked = await ctx.ask.chooseMany(`Which repos and folders should also send analytics to ${name}?${CONSENT}${part}`, options);
+    const question = `Which repos and folders should also send analytics to ${name}?${CONSENT}${part}`;
+    const picked = await ctx.ask.chooseMany(question, options, { exclusive: [batch.length] });
     if (picked === null || picked.length === 0) return false;
     if (picked.indexOf(batch.length) === -1) {
       for (let j = 0; j < picked.length; j += 1) await runAndReport(ctx, pickArgv(batch[picked[j]], key, tenant.tenant));

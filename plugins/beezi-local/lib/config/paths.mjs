@@ -134,6 +134,16 @@ export function stateDir() {
   return path.join(beeziHome(), 'state');
 }
 
+// The last routing change, kept for undo. Root-level: the state dir's `*.json` scans read every file there as a session.
+export function ruleUndoFile() {
+  return path.join(beeziHome(), 'rule-undo.json');
+}
+
+// Whether the CLI status line ends with the Beezi badge: { version, enabled }. Root-level for the same `*.json` scan reason.
+export function statuslineBadgeFile() {
+  return path.join(beeziHome(), 'statusline-badge.json');
+}
+
 // Per-session workspace choice. Extension-less so the state-dir `*.json` scans and the checkpoint's
 // load-mutate-save of <id>.json never touch it; pruneStale sweeps it with the rest of state/.
 export function sessionWorkspaceFile(sessionId) {

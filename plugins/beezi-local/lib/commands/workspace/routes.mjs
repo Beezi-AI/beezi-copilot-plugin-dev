@@ -9,8 +9,10 @@ import { listSessionFiles } from '../../sources/cli/session-files.mjs';
 import { UserError } from '../../core/errors.mjs';
 import { commandLine, deferSuffix, routeLine, routesHeaderLine, ruleAddCommandLine, workspaceLines } from '../../ux/workspace-lines.mjs';
 import { machineLine } from '../../ux/machine-lines.mjs';
-import { USAGE, pastSessionOptions, parseSessionFlag, resolveSession, selectedRows } from './args.mjs';
+import { resolveSession } from '../../workspace/session-routes.mjs';
+import { USAGE, pastSessionOptions, parseSessionFlag, selectedRows } from './args.mjs';
 
+// Returns how many P lines it printed.
 export async function routes(argv, cx = { deferUpload: false }) {
   const { session, rest: afterSession } = parseSessionFlag(argv);
   const { account, rest } = await parseAccountFlag(afterSession);
@@ -44,4 +46,5 @@ export async function routes(argv, cx = { deferUpload: false }) {
     }
   }
   console.log(machineLine([['routes', total]]));
+  return total;
 }

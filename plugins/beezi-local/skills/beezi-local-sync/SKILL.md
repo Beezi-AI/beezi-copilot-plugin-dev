@@ -24,8 +24,8 @@ commas." When a step says "show … first", write that output verbatim in your r
 the user reads it while answering. If the preflight printed `mode=argument-only`, do not call
 `ask_user` at all: list the choices as a numbered list, stop, and tell the user to run the skill again
 with their choice typed after the command.
-In this skill only, if the preflight printed `mode=argument-only`, skip Step 1's questions (a skipped
-question runs nothing) and go to Step 2.
+In this skill only, if the preflight printed `mode=argument-only`, skip Step 1 (run nothing from it)
+and go to Step 2.
 
 Arguments: the text the user typed after the skill's slash command in the message that started this
 skill; none if they typed only the command. When it names an account (an email or key), `<key>` below
@@ -34,13 +34,24 @@ is that account's key from `node "<plugin-root>/scripts/accounts.mjs"` (for you 
 Step 0 — run EXACTLY `node "<plugin-root>/scripts/preflight.mjs" --for sync`. If its first line
 starts with `✗`, show it verbatim and STOP.
 
-Step 1 — new workspaces, then repos and folders with no rule. In `mode=argument-only`, this step's
-questions are skipped (as for the rest of Step 1).
+Step 1 — new workspaces, then repos and folders with no rule, then the sync. In
+`mode=argument-only`, skip this step and go to Step 2.
 
-First, new workspaces. Run EXACTLY (for you only; add `--account <key>` when the user named an
-account):
+Run EXACTLY this one command (add `--account <key>` when the user named an account, and Step 2's
+`--tenant` override when the user asked for it):
 
-`node "<plugin-root>/scripts/workspace.mjs" joined --defer-upload`
+`node "<plugin-root>/scripts/sync.mjs" --review`
+
+It prints a `<joined>` block (new workspaces, below) and stops there when that block's last line is
+not `joined=0`. Otherwise it prints a `<routes>` block (repos and folders with no rule, below) and
+stops there when its last line is not `routes=0`. Its last listing line, `review=<n>`, is for you
+only: the number of `J` or `P` lines waiting for an answer. On `review=0` it goes straight on
+to the sync: everything after that line is Step 2's output, and no other command runs. A listing that
+fails shows a `✗` line inside its block instead and counts as nothing to ask: write that line
+verbatim.
+
+First, new workspaces: the `<joined>` block is what `workspace.mjs joined --defer-upload` prints, for
+you only.
 
 Lines:
 - `<email>: you joined <names> — <N> repos or folders to review account=<key> new=<ids>` starts the
@@ -88,15 +99,21 @@ accounts and the choice numbers are not: preserve each printed `J` number to mat
 use a choice number to look up a `J<i>-command`.
 
 For each picked `J` line, run its `J<i>-command=` text EXACTLY ONCE, changing only the final
-`<tenant>`: that workspace's `tenant=` value inside single quotes, like `'<id>'`. "None of these",
-alone or with other choices, wins: run no `J<i>-command` for that question (it still counts as an
-answer). An empty or unmatched answer, or a dismissed question, is no answer and runs nothing.
+`<tenant>`: that workspace's `tenant=` value inside single quotes, like `'<id>'`. "None of these"
+stands alone: as the whole answer it runs no `J<i>-command` and still counts as an answer. An answer
+with "None of these" together with a repo runs nothing and is not an answer: ask the same question
+once more, starting with `"None of these" can't be combined with repos — pick one or the other.` A
+second mixed answer is a dismissal. An empty or unmatched answer, or a dismissed question, is no answer and runs nothing.
 After every new workspace's question has been answered, run the `done-command=` text EXACTLY ONCE;
 otherwise run no `done-command`, and the next login or sync asks again. Never rebuild a command or re-quote its path. Write each command's first
 line verbatim.
 
-Then, repos and folders with no rule. Run EXACTLY (add `--account <key>` when the user named an
-account): `node "<plugin-root>/scripts/workspace.mjs" routes --defer-upload`. Its output is for you only, except the
+Then, repos and folders with no rule. Run nothing for them after `joined=0`: the Step 1 command
+already printed the `<routes>` block. After the `J` questions (answered or not) and their commands,
+run EXACTLY, with the same `--account` and `--tenant` as the Step 1 command:
+`node "<plugin-root>/scripts/sync.mjs" --review-routes`. It prints the `<routes>` block and
+`review=<n>`, and on `review=0` goes straight on to the sync as the Step 1 command does. The
+`<routes>` block is what `workspace.mjs routes --defer-upload` prints. It is for you only, except the
 one line named below. For each account in several workspaces set to "Ask me", it prints a block:
 `<email>: <N repos or folders have | 1 repo or folder has> past sessions with no rule (<M> sessions) account=<key>`; `W.`
 lines (one per workspace: `W. <workspace> account=<key> tenant=<id> role=<role>`); `P<i>. <short>
@@ -104,7 +121,8 @@ lines (one per workspace: `W. <workspace> account=<key> tenant=<id> role=<role>`
 `P<i>-command=<command>` ending in a literal `<tenants>`; one `all-command=<command>`. Then
 `<n> other past sessions have no recorded folder and are not sent.` (for one session: `1 other past
 session has no recorded folder and is not sent.`) — write it verbatim, once — and last
-`routes=<total>`. Not linked or `routes=0` → Step 2.
+`routes=<total>`. Not linked or `routes=0` → nothing to ask: the sync already ran in the same call; go
+to Step 2 for its output.
 
 For each account with `P` lines (with several accounts, end every question with " (<email>)"):
 - More than 4 `P` lines → ask "Where should analytics for these <N> repos and folders go?" with "Send
@@ -119,17 +137,24 @@ For each account with `P` lines (with several accounts, end every question with 
   `kind=folder` "(i of N) Where should analytics for <label> (and everything inside it) go?" ending
   with "Don't track this folder"; `kind=outside` "(i of N) Where should analytics for sessions outside
   a project folder go?" ending with "Don't track these". Choices: one per `W.` line of that account,
-  then that last choice.
+  then that last choice — "Not tracked: nothing from <short> is sent" ("Not tracked: nothing from
+  sessions outside a project folder is sent" for `outside`).
 
 For each answered `P` line run its `P<i>-command=` text EXACTLY ONCE, changing only the final
-`<tenants>`: the chosen `tenant=` values joined by commas inside one pair of single quotes, like `'<id>,<id>'`, or `none` when the last choice was picked
-(it wins). Never rebuild a command or re-quote its path. Write each command's first line verbatim.
+`<tenants>`: the chosen `tenant=` values joined by commas inside one pair of single quotes, like `'<id>,<id>'`, or `none` when the last choice is the whole answer.
+The last choice stands alone: when an answer has it together with a workspace, run nothing and ask
+the same question once more, starting with `"Don't track" can't be combined with a workspace — pick one or the other.` A second
+mixed answer is a dismissal. Never rebuild a command or re-quote its path. Write each command's first
+line verbatim.
 
-Step 2 — sync. Run EXACTLY `node "<plugin-root>/scripts/sync.mjs"` with no flags. Add `--account <key>`
+Step 2 — sync. When the last listing printed `review=0`, the sync already ran: its output is
+everything after that `review=0` line, so write it verbatim as your reply text and run nothing more.
+Otherwise — after the `P` questions (answered or not) and their commands, or in `mode=argument-only`
+— run EXACTLY `node "<plugin-root>/scripts/sync.mjs"` with no flags. Add `--account <key>`
 only when the user named an account, and `--account <key> --tenant '<id>[,<id>…]'` only when the user
 asks to sync to specific workspaces — an override that sends every past session there, ignoring
-rules. Never add or suggest any other flag (`--force`, `--since`, `--dry-run` are not offered). Write
-its output verbatim as your reply text.
+rules. Never add or suggest any other flag than Step 1's `--review` and `--review-routes` (`--force`,
+`--since`, `--dry-run` are not offered). Write its output verbatim as your reply text.
 
 It resumes each session from what Beezi already has, so repeating it is safe. Output saying
 "everything is already uploaded" is success: do not re-run it or look for flags to force it. "this

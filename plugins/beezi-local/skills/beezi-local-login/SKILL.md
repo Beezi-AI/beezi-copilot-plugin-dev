@@ -1,7 +1,7 @@
 ---
 name: beezi-local-login
 description: Link a Beezi account to this machine with a browser sign-in, record which Copilot plan pays for it, and upload past Copilot sessions. Use when the user wants to log in, sign in or connect to Beezi, add another Beezi account, or when a Beezi tool says this machine is not linked. Run it again to add accounts or resume an interrupted upload.
-argument-hint: "[pasted sign-in address]"
+argument-hint: "[pasted sign-in address | <n>]"
 allowed-tools: shell(node:*), ask_user
 ---
 
@@ -23,8 +23,10 @@ its choices and end the question with " You can pick more than one: type their n
 commas." When a step says "show … first", write that output verbatim in your reply before asking —
 the user reads it while answering. If the preflight printed `mode=argument-only`, do not call
 `ask_user` at all: in this skill, skip every question (a skipped question runs nothing) and keep going
-with the next step. Never stop the login for this reason. Step 1p's request for the pasted address is
-plain text, not an `ask_user` question, so it still happens in `mode=argument-only`.
+with the next step, except Step 1w's "Where should analytics from this machine go?", which Step 1w
+lists as a numbered list before it stops. Never stop the login for any other question. Step 1p's
+request for the pasted address is plain text, not an `ask_user` question, so it still happens in
+`mode=argument-only`.
 
 Step 0 — preflight, before anything else. Run EXACTLY:
 
@@ -36,25 +38,62 @@ STOP as well, do not retry it another way, and tell the user this session's mode
 scripts. If it starts with `✓`, continue.
 
 Arguments. When the arguments are `--no-browser` or ask to sign in without a browser, go to Step 1p.
-Any other non-empty arguments are the address pasted back from a paste-back sign-in started earlier
-(Step 1p): skip Step 1 and the first command of Step 1p, and run Step 1p's `--complete` command with the
-arguments as the reply (trimmed and escaped the same way).
+When they are one whole number, they answer Step 1w's question from an earlier run of this skill in
+this conversation: go to Step 1w's "Answer by number". Any other non-empty arguments are the address
+pasted back from a paste-back sign-in started earlier (Step 1p): skip Step 1 and the first command of
+Step 1p, and run Step 1p's `--complete` command with the arguments as the reply (trimmed and escaped
+the same way).
+
+## How the steps run
+
+Steps 1 to 5a come from ONE script, which runs them in order and stops at the first one that needs a
+question:
+
+`node "<plugin-root>/scripts/login-flow.mjs"`
+
+Each step's output is a block: a `<name …>` line, the output, then a `</name>` line (the tag lines are
+never shown). Its LAST line says what to do now: `next=<step> account=<key>`, or just `next=stop` when
+the sign-in linked nothing (never shown either). `<key>` is the account just linked: remember it;
+every later command passes it as `--account <key>`.
+
+| `next=` | Go to | Then carry on with `--from` |
+|---|---|---|
+| `stop` | Step 1, the sign-in did not link an account | (nothing) |
+| `setup` | Step 1w, where analytics from this machine go | `here` |
+| `here` | Step 1w, this session's own folder | `plan` |
+| `plan` | Step 3 and Step 3v | `default` |
+| `default` | Step 4 | `joined` |
+| `joined` | Step 5a, new workspaces | `routes` |
+| `routes` | Step 5a, repos and folders with no rule | (Step 5b next) |
+| `backfill` | Step 5b | (nothing) |
+
+After a question's answer (or its dismissal, or a question skipped in `mode=argument-only`) and the
+commands it calls for, carry on with EXACTLY this, `<step>` from the table's last column:
+
+`node "<plugin-root>/scripts/login-flow.mjs" --account <key> --from <step>`
+
+It prints the blocks of the steps from there on and a new `next=` line. A listing that fails shows a
+`✗` line inside its block and the script goes on: write that line verbatim. Output that ends without
+any `next=` line means the script itself failed or refused to run: show what it printed verbatim and
+stop (running /beezi-local-login again resumes safely). Never run the commands behind the blocks yourself
+(`login.mjs`, `billing-capture.mjs --from-copilot`, the `workspace.mjs` `rules`, `joined` and `routes`
+listings): the blocks hold their output. Before doing what `next=` says, write out what each block
+printed this time calls for, in order, as its step below says (Step 1's sign-in output, Step 2's
+capture lines, Step 5a's no-folder line).
 
 Step 1 — sign in (opens the browser and waits until the user approves there). Go to Step 1p instead
 when the user asks to sign in without a browser or on another device, or when this session runs where
 no browser can open on this machine (an SSH session, a container, a Codespace, a VS Code Remote window).
-Otherwise run EXACTLY:
+Otherwise run `login-flow.mjs` with no arguments (above). Its `<sign-in>` block holds the sign-in's
+output.
 
-`node "<plugin-root>/scripts/login.mjs"`
-
-Show its output except its LAST line, the machine line `account=<key>` (never shown): remember that
-key; every later step passes it as `--account <key>`. If it says the machine is already linked as that
-account, say so and still continue with Step 1w, so a changed plan is refreshed and an interrupted
-upload resumes. If it prints no `account=` line, show the output and STOP, except in the case Step 1p
-covers. If the sign-in fails with a network or connection error, do not retry and do not continue:
-tell the user the sign-in could not reach Beezi, and that a sandboxed session may block the network.
-A failed sign-in never removes an earlier authorization; if the output says so, relay it verbatim and
-never tell the user they were logged out.
+Show the `<sign-in>` block except the machine line `account=<key>` (never shown). If it says the
+machine is already linked as that account, say so: the script still went on, so a changed plan is
+refreshed and an interrupted upload resumes. On `next=stop`, show the block and STOP, except in the
+case Step 1p covers. If the sign-in fails with a network or connection error, do not retry and do not
+continue: tell the user the sign-in could not reach Beezi, and that a sandboxed session may block the
+network. A failed sign-in never removes an earlier authorization; if the output says so, relay it
+verbatim and never tell the user they were logged out.
 
 Step 1p — paste-back sign-in. When Step 1 sends you here, when the user says the browser did not open,
 or when Step 1 failed because the sign-in timed out or was never approved in the browser. This is the
@@ -73,59 +112,89 @@ with the escaped address in place of `<pasted>`:
 
 `node "<plugin-root>/scripts/login.mjs" --complete '<pasted>'`
 
-Handle its output exactly like Step 1's: its last line is `account=<key>`, and without one, show the
-output and STOP.
+Show its output except its last line, `account=<key>` (never shown); without one, show the output and
+STOP. With one, carry on with `--from setup`, which runs everything after the sign-in.
 
-Step 1w — new folders. Run EXACTLY (for you only; do not show it):
+Step 1w — where analytics from this machine go. The script stops with `next=setup` only for an account
+in several workspaces that has never set where repos and folders with no rule go. Without a `<setup>`
+block, say nothing about it.
 
-`node "<plugin-root>/scripts/workspace.mjs" new-folders --account <key> --defer-upload`
+The `<setup account="<key>">` block is for you only: one `W. <workspace> account=<key> tenant=<id>
+role=<role>` line per workspace, then `sessions=<N> places=<M>` (the past sessions the history upload
+would send, and the repos and folders they ran in) or a `✗` line when they could not be counted (write
+it verbatim), then the choices as `O<i>. <label> — <description>` lines. `O<i>` for `i` up to the
+number of `W.` lines is the `i`-th `W.` line's workspace; the next `O` line is "Several workspaces…" and
+the last `O` line is "Let me choose per repo".
 
-Its last line is `new-folders=<ask|send|none> set=<yes|no> multi=yes account=<key>` for an account in
-several workspaces, or `new-folders=n/a multi=no account=<key>`. Lines before it include
-`W. <workspace> account=<key> tenant=<id> role=<role>`, one per workspace.
+Ask "Where should analytics from this machine go?" with one choice per `O` line, in order: its text
+after `O<i>. `, exactly. In `mode=argument-only`, write that question and the same choices as a
+numbered list instead, leaving out the "Several workspaces…" line: numbered 1, 2, … in order, so the
+last number is "Let me choose per repo". Stop, and tell the user to run `/beezi-local-login <n>` with the
+number of their choice.
 
-Only when the last line contains `set=no`, ask "Where should analytics go for repos and folders with
-no rule yet?" with the choices "Ask me (recommended) — Beezi asks once per repo or folder, when a
-session starts there", "Send to… — pick the workspaces that get them", "Don't send — nothing from a
-repo or folder with no rule is uploaded".
-- "Ask me" → run EXACTLY `node "<plugin-root>/scripts/workspace.mjs" new-folders ask --account <key> --defer-upload`
-- "Don't send" → run EXACTLY `node "<plugin-root>/scripts/workspace.mjs" new-folders none --account <key> --defer-upload`
-- "Send to…" → ask "Which workspaces should get analytics for repos and folders with no rule?" (several
-  allowed), one choice per `W.` line: the workspace name (text after `W. ` up to ` account=`) — its
-  `role=` value, or "Beezi workspace" when empty. Then run EXACTLY, with the chosen lines' `tenant=`
-  values joined by commas (the template already single-quotes them, so PowerShell keeps them one argument):
-  `node "<plugin-root>/scripts/workspace.mjs" new-folders send '<ids>' --account <key> --defer-upload`
+Answer by number (the arguments were one whole number `<n>`): after Step 0, take `<key>` from the
+`<setup account="<key>">` block an earlier run printed in this conversation; when there is none, say
+the number answers nothing here and start at Step 1 instead. Run
+`node "<plugin-root>/scripts/login-flow.mjs" --account <key> --from setup`. When it ends with
+`next=setup`, the answer is the `<n>`-th choice of that same list (the `O` lines without "Several
+workspaces…"); a number past the list is a dismissal: ask nothing and go on below. Otherwise the
+setting was made meanwhile: follow its `next=` line.
 
-Write the command's first line verbatim.
+Then, by the answer:
+- a workspace → run EXACTLY, with that `W.` line's `tenant=` value (the template already single-quotes
+  it, so PowerShell keeps it one argument):
+  `node "<plugin-root>/scripts/workspace.mjs" new-folders send '<id>' --account <key> --defer-upload`
+- "Several workspaces…" → ask "Which workspaces should get analytics from this machine?" (several
+  allowed, one choice per `W.` line: the workspace name — its `role=` value, or "Beezi workspace" when
+  empty). End the question with " You can pick more than one: type their numbers separated by
+  commas." Run EXACTLY, with the chosen `tenant=` values joined by commas (one chosen workspace is fine):
+  `node "<plugin-root>/scripts/workspace.mjs" new-folders send '<id>,<id>' --account <key> --defer-upload`
+  An empty, unmatched or dismissed answer runs nothing, and the next login asks again.
+- "Let me choose per repo" → run EXACTLY `node "<plugin-root>/scripts/workspace.mjs" new-folders ask --account <key> --defer-upload`
+- a dismissal, or a question skipped → run nothing; the next login asks again.
 
-Then this session's own folder, only when the setting is now "Ask me" (the last line said
-`new-folders=ask` and no `send`/`none` command just succeeded). Run EXACTLY (for you only):
+Write the command's first line verbatim, then carry on with `--from here`.
 
-`node "<plugin-root>/scripts/workspace.mjs" rules --account <key>`
+Then this session's own folder. The script checks it by itself whenever the setting is "Ask me", and
+stops with `next=here` only when this folder has no rule. Then the `<rules account="<key>">` block
+holds the `workspace.mjs rules` listing, for you only. Its `here:` line is
+`here: <short> (<label>) → no rule now=<ids|pending|none> [path=<path>] account=<key> rule=none kind=<repo|folder|outside> match=<…>`.
+`<short>` is the name the line gives, `<label>` the text in parentheses right after it. Ask (several
+allowed), by its `kind=`:
 
-Its `here:` line is `here: <short> (<label>) → <R<n> | no rule> account=<key> rule=<n|none> kind=<repo|folder|outside> match=<…>`.
-Only when it has `rule=none`, ask the workspace question for it (see Step 5a) and run EXACTLY, with
-`<ids>` = the chosen `tenant=` values joined by commas, or `none` when the last choice was picked:
+| `kind=` | Question | Last choice |
+|---|---|---|
+| `repo` | "Where should analytics for <short>, the repo you're in, go?" | "Don't track <short>" |
+| `folder` | "Where should analytics for <label>, the folder you're in (and everything inside it), go?" | "Don't track <short>" |
+| `outside` | "Where should analytics for sessions outside a project folder go?" | "Don't track these" |
+
+Choices: one per `W.` line of the block (name — role, or "Beezi workspace"), then the last choice —
+"Not tracked: nothing from <short> is sent" ("Not tracked: nothing from sessions outside a project
+folder is sent" for `outside`). Run EXACTLY, with `<ids>` = the chosen `tenant=` values joined by
+commas, or `none` when the last choice is the whole answer:
 
 `node "<plugin-root>/scripts/workspace.mjs" rule add --current --account <key> --defer-upload '<ids>'`
 
-and write its first line verbatim. Steps 2–4 pick their workspaces themselves; pass no `--tenant`.
+and write its first line verbatim. The last choice stands alone: when an answer has it together with a workspace, run nothing and ask the
+same question once more, starting with `"Don't track" can't be combined with a workspace — pick one or the other.`
+A second mixed answer is a dismissal. Nothing chosen or a skipped question runs nothing. Then carry on
+with `--from plan`. Steps 2–4 pick their workspaces themselves; pass no `--tenant`.
 
-Step 2 — the Copilot plan. Run EXACTLY:
-
-`node "<plugin-root>/scripts/billing-capture.mjs" --from-copilot --via login --account <key>`
+Step 2 — the Copilot plan. The `<capture>` block is
+`node "<plugin-root>/scripts/billing-capture.mjs" --from-copilot --via login --account <key>`'s output;
+the script runs it on every login, including when the machine was already linked.
 
 It reads only non-secret account information from Copilot on this machine. Its first lines are for the
 user (a second `✓ Beezi billing for VS Code …` line appears when VS Code is signed in to another GitHub
 account), followed by any change notices: write those verbatim. The `key=value` lines after them
 (`source=`, `plan=`, `plan-source=`, `identity=`, and any `vscode-…=` lines) are machine lines for you
-only — never show them. Ask nothing and go to Step 4 unless a machine line is `plan-source=none` or
-`vscode-plan-source=none`.
+only — never show them. The script stops with `next=plan` only when a machine line is
+`plan-source=none` or `vscode-plan-source=none`; otherwise it went on to Step 4.
 
-Step 3 — ask the plan, only when Step 2 printed the machine line `plan-source=none`. Ask "Which GitHub Copilot
-plan pays for your Copilot use on this machine?" with the choices "Copilot Free", "Copilot Student",
-"Copilot Pro", "Copilot Pro+", "Copilot Max", "Copilot Business — a seat from your organization",
-"Copilot Enterprise — a seat from your enterprise", "I don't know". Map the answer:
+Step 3 — ask the plan, only when the `<capture>` block has the machine line `plan-source=none`. Ask
+"Which GitHub Copilot plan pays for your Copilot use on this machine?" with the choices "Copilot Free",
+"Copilot Student", "Copilot Pro", "Copilot Pro+", "Copilot Max", "Copilot Business — a seat from your
+organization", "Copilot Enterprise — a seat from your enterprise", "I don't know". Map the answer:
 
 | Answer | value |
 |---|---|
@@ -142,7 +211,8 @@ and write its first line and any change notices verbatim (never its `key=value` 
 don't know", a dismissal or any other answer runs nothing: say
 the link succeeded, the plan stays unknown, and `/beezi-local-settings refresh` sets it later.
 
-Step 3v — VS Code's account, only when Step 2 printed the machine line `vscode-plan-source=none`. Ask
+Step 3v — VS Code's account, only when the `<capture>` block has the machine line
+`vscode-plan-source=none`. Ask
 "VS Code's Copilot is signed in as <vscode-login>, a different GitHub account. Which Copilot plan does
 <vscode-login> have?", where `<vscode-login>` is the value of the `vscode-login=` machine line, with the
 same choices as Step 3, and map the answer the same way. Run EXACTLY ONCE, with `<vscode-identity>` the
@@ -151,18 +221,21 @@ value of the `vscode-identity=` machine line:
 and write its first line verbatim. "I don't know", a dismissal or any other answer runs nothing: say
 that account's plan stays unknown and `/beezi-local-settings refresh` sets it later.
 
-Step 4 — default account, only when Step 1's output contained `/beezi-local-analytics still reads from …`.
+Then carry on with `--from default`.
+
+Step 4 — default account. The script stops with `next=default` only when another account stays the
+one /beezi-local-analytics reads from (Step 1's output said `/beezi-local-analytics still reads from …`).
 Ask "Make <the account from Step 1> the account /beezi-local-analytics reads from?" with "Yes" and "No".
 Yes → run EXACTLY `node "<plugin-root>/scripts/accounts.mjs" use <key>` and write its output verbatim.
 No → say the default is unchanged and `/beezi-local-settings account` switches it. Session tracking goes to
-every linked account either way.
+every linked account either way. Then carry on with `--from joined`.
 
 Step 5a — new workspaces, then repos and folders with no rule. In `mode=argument-only`, skip the
 new-workspace questions and run nothing for them.
 
-First, new workspaces. Run EXACTLY (for you only):
-
-`node "<plugin-root>/scripts/workspace.mjs" joined --account <key> --defer-upload`
+First, new workspaces. The script stops with `next=joined` when the `<joined account="<key>">` block
+(for you only) has something to review; it is
+`node "<plugin-root>/scripts/workspace.mjs" joined --account <key> --defer-upload`'s output.
 
 Lines:
 - `<email>: you joined <names> — <N> repos or folders to review account=<key> new=<ids>` starts the
@@ -178,8 +251,6 @@ Lines:
 - `done-command=<command>` records that the new workspaces were reviewed, and keeps unpicked repos and
   folders sending where they send now;
 - `joined=<total>` is last.
-
-`joined=0` → go to "Then, repos and folders with no rule".
 
 More than 4 `J` lines → first ask "You joined <names>. Where should analytics for these <N> repos and
 folders go? Their past sessions will be sent there too." with:
@@ -204,23 +275,25 @@ these goes to <name>". Preserve each printed `J` number to match its command; ne
 number to look up a `J<i>-command`.
 
 For each picked `J` line, run its `J<i>-command=` text EXACTLY ONCE, changing only the final
-`<tenant>`: that workspace's `tenant=` value inside single quotes, like `'<id>'`. "None of these",
-alone or with other choices, wins: run no `J<i>-command` for that question (it still counts as an
-answer). An empty or unmatched answer, or a dismissed question, is no answer and runs nothing.
+`<tenant>`: that workspace's `tenant=` value inside single quotes, like `'<id>'`. "None of these"
+stands alone: as the whole answer it runs no `J<i>-command` and still counts as an answer. An answer
+with "None of these" together with a repo runs nothing and is not an answer: ask the same question
+once more, starting with `"None of these" can't be combined with repos — pick one or the other.` A
+second mixed answer is a dismissal. An empty or unmatched answer, or a dismissed question, is no answer and runs nothing.
 After every new workspace's question has been answered, run the `done-command=` text EXACTLY ONCE;
 otherwise run no `done-command`, and the next login or sync asks again. Never rebuild a command or re-quote its path. Write each command's first
-line verbatim.
+line verbatim. Then carry on with `--from routes`.
 
-Then, repos and folders with no rule. Run EXACTLY (for you only, except the line named below):
-
-`node "<plugin-root>/scripts/workspace.mjs" routes --account <key> --defer-upload`
+Then, repos and folders with no rule. The `<routes account="<key>">` block (for you only, except the
+line named below) is `node "<plugin-root>/scripts/workspace.mjs" routes --account <key> --defer-upload`'s
+output; the script stops with `next=routes` when it lists any.
 
 Lines: `W.` lines as in Step 1w; `P<i>. <short> (<label>), <k> sessions account=<key> kind=<repo|folder|outside> match=<…>`
 (one repo or folder; `P<i>. outside a project, …` is every past session in the home folder, `/`, a
 temp folder or a Copilot app chat folder); `P<i>-command=<command>` right after its `P` line, ending in a literal `<tenants>`;
 `all-command=<command>`; `<n> other past sessions have no recorded folder and are not sent.` (for one
 session: `1 other past session has no recorded folder and is not sent.`) — write that line verbatim,
-once; `routes=<total>` last. `routes=0` → go to Step 5b.
+once, whatever `next=` says; `routes=<total>` last.
 
 More than 4 `P` lines → first ask "Where should analytics for these <N> repos and folders go?" with
 "Send all <N> to the same workspaces… — pick the workspaces once for all of them", "Choose per repo —
@@ -235,10 +308,13 @@ Where should analytics for <short> go?" ending with "Don't track this repo"; for
 Where should analytics for <label> (and everything inside it) go?" ending with "Don't track this
 folder"; for `kind=outside` "(i of N) Where should analytics for sessions outside a project folder
 go?" ending with "Don't track these". Choices: one per `W.` line (name — role, or "Beezi workspace"),
-then that last choice. For each answered `P` line run its `P<i>-command=` text EXACTLY ONCE, changing
+then that last choice — "Not tracked: nothing from <short> is sent" ("Not tracked: nothing from
+sessions outside a project folder is sent" for `outside`). For each answered `P` line run its `P<i>-command=` text EXACTLY ONCE, changing
 only the final `<tenants>`: the chosen `tenant=` values joined by commas inside one pair of single quotes, like `'<id>,<id>'`, or `none` when the last
-choice was picked (it wins). Never rebuild a command or re-quote its path. Write each command's first
-line verbatim.
+choice is the whole answer. The last choice stands alone: when an answer has it together with a workspace, run nothing and ask the same
+question once more, starting with `"Don't track" can't be combined with a workspace — pick one or the other.`
+A second mixed answer is a dismissal. Never rebuild a command or re-quote its path. Write each
+command's first line verbatim. Then go to Step 5b.
 
 Step 5b — upload past sessions. This is always the last step. Run EXACTLY, with no other flags:
 

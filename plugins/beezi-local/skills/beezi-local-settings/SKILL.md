@@ -1,7 +1,7 @@
 ---
 name: beezi-local-settings
 description: Show and change Beezi settings — where each repo or folder sends its analytics (rules), the New folders default, the default account and the Copilot plan, crash reports, and Beezi's status line.
-argument-hint: "[show | rules [show | add | remove <n>] | new-folders [show] | account [show] | refresh | telemetry [show | on | off | correlate | anonymous] | statusline [show | on | off]]"
+argument-hint: "[show | <n> | rules [show | add | remove <n>] | new-folders [show] | account [show] | refresh | undo | telemetry [show | on | off | correlate | anonymous] | statusline [show | on | off | badge on | badge off]]"
 allowed-tools: shell(node:*), ask_user
 ---
 
@@ -37,37 +37,77 @@ Unless the arguments are exactly `show` or a section followed by `show`, run EXA
 
 If its first line starts with `✗`, show it verbatim and STOP.
 
-## Show
+## Read the settings: one command
 
-Only when the arguments are empty (or name no section below), run EXACTLY
-`node "<plugin-root>/scripts/settings.mjs"` and write its output verbatim as your reply text, before
-anything else. Always run EXACTLY (for you only; do not show it):
+Everything this skill reads comes from ONE command, picked by the first word of the arguments. Run it
+once, right after the preflight, and take everything below from its output: never run it again, nor
+another command to read settings. The commands below only change settings or refresh the plan, except
+the Picker's `places` listing, which reads the recent repos and folders to pick from.
 
-`node "<plugin-root>/scripts/settings.mjs" keys`
+| First word of the arguments | Run EXACTLY |
+|---|---|
+| `show` alone | `node "<plugin-root>/scripts/settings.mjs" all` |
+| `rules` | `node "<plugin-root>/scripts/settings.mjs" rules` |
+| `new-folders` | `node "<plugin-root>/scripts/settings.mjs" new-folders` |
+| `account` | `node "<plugin-root>/scripts/settings.mjs" account` |
+| `telemetry` or `statusline`, alone or + `show` | `node "<plugin-root>/scripts/settings.mjs" privacy` |
+| `telemetry <mode>`, `statusline on`/`off` or `statusline badge on`/`off` | nothing: go to Crash reports & status line |
+| `refresh` | nothing: go to Refresh my Copilot plan |
+| `undo` | nothing: go to Undo my last change |
+| a number, nothing, or anything else | `node "<plugin-root>/scripts/settings.mjs"` |
 
-It prints `menu=<label>|<label>…` (the sections that apply here); one
-`account=<key> default=<yes|no> multi=<yes|no> workspaces=<n> status=<…> email=<email>` line per linked
-account (no such line: nothing is linked; `multi=yes`: the account is in several workspaces;
-`workspaces=<n>`: its known workspace count, `0` when not known yet); and
-`crash=<correlate|on|anonymous|off> statusline=<on|off>`.
+Its output is blocks, each from a `<name …>` line to its `</name>` line:
+
+- `<show>` — always first. Write its lines (not the tag lines) verbatim as your reply's first text.
+- `<keys>` — for you only: `menu=<label>|<label>…` (the sections that apply here); one
+  `account=<key> default=<yes|no> multi=<yes|no> workspaces=<n> status=<…> email=<email>` line per
+  linked account (no such line: nothing is linked; `multi=yes`: the account is in several workspaces;
+  `workspaces=<n>`: its known workspace count, `0` when not known yet); and
+  `crash=<correlate|on|anonymous|off> statusline=<on|off> badge=<on|off>` (`badge=on`: the status line
+  ends with the Beezi badge; it counts only with `statusline=on`).
+- `<labels>` — with the menu read only: one line per `menu=` label, in the same order, the label with
+  its current state (like `Rules: here → Alpha`, `New folders: ask me`, `Account: 2 linked`). These are
+  the menu's choices.
+- `<rules account="<key>">` — with the menu read or `rules`, one per account whose workspaces are
+  known: that account's rule lines, for you only; see Rules.
+- `<here-card account="<key>">` — with the menu read or `rules`, one per such account when this folder
+  is known: where you are and where its analytics go now. Shown only where Rules says so.
+- `<new-folders account="<key>">` — with the menu read or `new-folders`, one per account in several
+  workspaces: its New folders lines, for you only; see New folders.
+
+Only `<show>` and, where Rules says so, a `<here-card>` are ever shown.
 
 ## Route
 
-- `show` alone → run EXACTLY `node "<plugin-root>/scripts/settings.mjs" all`, write its output
-  verbatim, and stop.
-- `rules show`, `new-folders show`, `account show`, `telemetry show` or `statusline show` → run EXACTLY
-  `node "<plugin-root>/scripts/settings.mjs" <section>` with `<section>` = `rules`, `new-folders`,
-  `account`, or `privacy` (for telemetry and statusline), write its output verbatim, and stop.
+First, `show` prints the current settings and changes nothing: `show` alone, or a section followed by
+`show` (`rules show`, `new-folders show`, `account show`, `telemetry show` or `statusline show`) → the
+`<show>` lines are the whole reply; stop.
 
 Otherwise, by the first word of the arguments: `rules` → Rules (with the rest of the arguments);
-`new-folders` → New folders; `account` → Account; `refresh` → Refresh my Copilot plan; `telemetry` or
-`statusline` → Crash reports & status line (with the rest of the arguments). Nothing or anything else
-→ ask "What do you want to change?" with one choice per `menu=` label, in its order and with exactly
-its text, each followed by its description: Rules — "where each repo or folder sends its analytics";
-New folders — "where analytics go for a repo or folder with no rule"; Account — "refresh your Copilot
-plan" (plus "or pick the default account" when there are several `account=` lines); Crash reports &
-status line — "plugin crash reports and Beezi's status line". Go to the chosen section; a dismissal
-stops.
+`new-folders` → New folders; `account` → Account; `refresh` → Refresh my Copilot plan; `undo` → Undo my last change;
+`telemetry` or `statusline` → Crash reports & status line (with the rest of the arguments). A number
+`<n>` (the answer to the menu below, typed after the command) → the section of the n-th `menu=`
+label, without asking the menu again; a number with no such label → the menu.
+
+Nothing or anything else → ask "What do you want to change?" with one choice per `<labels>` line, in
+its order and with exactly its text, each followed by its description. The n-th `<labels>` line is the
+n-th `menu=` label's section: the description and the section you go to follow that `menu=` label.
+Descriptions: Rules — "where each repo or folder sends its analytics"; New folders — "where analytics
+go for a repo or folder with no rule"; Account — "refresh your Copilot plan" (plus "or pick the
+default account" when there are several `account=` lines); Crash reports & status line — "plugin
+crash reports and Beezi's status line". In `mode=argument-only`, write the `<labels>` lines as a
+numbered list instead, stop, and tell the user to run `/beezi-local-settings <n>` with the number of their
+choice. Go to the chosen section; a dismissal stops.
+
+Every section below works from the blocks of this one read.
+
+## Undo my last change
+
+Every change's confirmation ends with " Undo: /beezi-local-settings undo"; this is where that lands.
+Run EXACTLY `node "<plugin-root>/scripts/workspace.mjs" undo`. Its output ends with `undone=1` (the
+last change was undone) or `undone=0` (nothing was undone): either way, write its first line verbatim
+and stop. Output with a `✗` line and no `undone=` line means nothing changed: write the `✗` line
+verbatim and stop.
 
 ## Choosing the account (Rules and New folders)
 
@@ -84,6 +124,16 @@ chosen line's `account=` value.
 Asked about one repo, folder, or the sessions outside a project folder; several answers allowed.
 `<short>` is the name the line gives, `<label>` the text in parentheses right after it.
 
+About the `here:` line (the repo or folder you're in):
+
+| `kind=` | Question | Last choice |
+|---|---|---|
+| `repo` | "Where should analytics for <short>, the repo you're in, go?" | "Don't track <short>" |
+| `folder` | "Where should analytics for <label>, the folder you're in (and everything inside it), go?" | "Don't track <short>" |
+| `outside` | "Where should analytics for sessions outside a project folder go?" | "Don't track these" |
+
+About an `R<n>.` line, an `F<i>.` line (Picker, below) or a typed target:
+
 | `kind=` | Question | Last choice |
 |---|---|---|
 | `repo` | "Where should analytics for <short> go?" | "Don't track this repo" |
@@ -91,38 +141,51 @@ Asked about one repo, folder, or the sessions outside a project folder; several 
 | `outside` | "Where should analytics for sessions outside a project folder go?" | "Don't track these" |
 
 Choices: one per `W.` line — the workspace name (text after `W. ` up to ` account=`) — its `role=`
-value, or "Beezi workspace" when empty; then the last choice — "Nothing from <short> is uploaded"
-("Nothing from sessions outside a project folder is uploaded" for `outside`). When it changes an
+value, or "Beezi workspace" when empty; then the last choice — "Not tracked: nothing from <short> is sent"
+("Not tracked: nothing from sessions outside a project folder is sent" for `outside`). When it changes an
 existing rule, add ", current" after the workspaces in that rule's `tenants=` (or after the last
 choice when `tenants=none`). `<ids>` = the chosen workspaces' `tenant=` values joined by commas, or
-`none` when the last choice is picked (it wins over the others). Nothing chosen → run nothing.
+`none` when the last choice is the whole answer.
+The last choice stands alone: when an answer has it together with a workspace, run nothing and ask the
+same question once more, starting with `"Don't track" can't be combined with a workspace — pick one or the other.`
+A second mixed answer is a dismissal. Nothing chosen → run nothing.
 
 ## Rules
 
-Choose the account, then run EXACTLY and write its output verbatim as your reply text:
+Choose the account. Its lines are the `<rules account="<key>">` block, for you only, and its card is
+the `<here-card account="<key>">` block (none when this folder is not known, or when live tracking is
+off for a one-workspace account).
 
-`node "<plugin-root>/scripts/workspace.mjs" rules --table --account <key>`
-
-Then run EXACTLY (for you only): `node "<plugin-root>/scripts/workspace.mjs" rules --account <key>`.
 For an account in several workspaces, its lines: `W. <workspace> account=<key> tenant=<id> role=<role>`;
 `R<n>. <short> (<label>) → <workspaces | not tracked> account=<key> rule=<n> kind=<…> tenants=<ids|none> match=<…>`;
-`here: <short> (<label>) → <R<n> | no rule> account=<key> rule=<n|none> kind=<…> match=<…>`. For
+`here: <short> (<label>) → <R<n> | no rule> now=<ids|pending|none> [path=<path>] account=<key> rule=<n|none> kind=<…> match=<…>`
+(`path=` only for a repo or folder). For
 a one-workspace account (`workspaces=1`) there are no `W.` lines: the first line reads
 `<account>: <n> rule(s) account=<key> workspaces=1`, and each `R<n>.` line reads
 `→ <not tracked | tracked>` in place of naming workspaces. A `kind=outside` line has no ` (<label>)`. `<here>` = the `here:` line's `<short>`, or "sessions outside a
 project" for `kind=outside`. The `here:` rule is "its own" when that `R<n>.` line has the same `kind=`
 and `match=`; otherwise it is a wider rule that covers this folder.
 
+In `mode=argument-only`, Rules only shows, for both kinds of account, and this wins over the
+numbered-list rule at the top: without asking "Whose rules?", show each qualifying account's card (its
+lines verbatim, when there is one) after the rules table, which is the `<show>` block the `rules` read
+already printed (after the menu read, say instead that `/beezi-local-settings rules show` prints the rules
+table). Then stop. Ask nothing and list no choices: no rules question, no workspace question, no
+Picker or typed target, and no Remove confirmation, with or without a rule number; run no
+`workspace.mjs` command. Say plainly that changing a rule needs an
+attended session, one where Beezi can ask you questions: run `/beezi-local-settings rules` there.
+
 For a one-workspace account, use One-workspace rules, below, instead of the rest of this section.
 
 By the rest of the arguments: `add` → Add; `remove <n>` → Remove rule `<n>` (drop a leading `R`);
-`remove` → Remove; anything else → ask "What do you want to do with rules?" offering only what
+`remove` → Remove; anything else → show the card first (its lines verbatim, when there is one), then
+ask "What do you want to do with rules?" offering only what
 applies, in this order: "Add a rule for <here>" (`rule=none`); "Change where <here> goes" (its own
 rule; description = that `R<n>.` line up to ` account=`); "Change where <rule short> goes (covers
 <here>)" and "Add a rule just for <here> — only <here> changes; R<n> keeps the rest" (a wider rule);
-"Add a rule for another folder or repo…" — "pick a different repo or folder" (only when the `here:`
+"Add a rule for another folder or repo… — pick a different repo or folder" (only when the `here:`
 line does not name a wider rule, so `rule=none` or its own rule); "Change a rule" and "Remove a rule"
-(any `R<n>.` line); "Done". "Done" or a dismissal stops.
+(any `R<n>.` line); "Close". "Close" or a dismissal stops.
 
 - Add, or "Add a rule just for <here>" → the workspace question about the `here:` line, then run
   EXACTLY `node "<plugin-root>/scripts/workspace.mjs" rule add --current '<ids>' --account <key>`
@@ -130,41 +193,63 @@ line does not name a wider rule, so `rule=none` or its own rule); "Change a rule
   run EXACTLY `node "<plugin-root>/scripts/workspace.mjs" rule set <n> '<ids>' --account <key>`
 - "Change a rule" → pick a rule ("Which rule do you want to change?"), the workspace question about
   it, then the `rule set` command with its number.
-- "Add a rule for another folder or repo…" → Typed target, below, then run EXACTLY, with the flag it
-  picked and the `<ids>` from the workspace question it asks:
-  `node "<plugin-root>/scripts/workspace.mjs" rule add --folder '<value>' '<ids>' --account <key>` or
-  `node "<plugin-root>/scripts/workspace.mjs" rule add --repo '<value>' '<ids>' --account <key>`
+- "Add a rule for another folder or repo…" → Picker, below.
 - Remove → no `R<n>.` line: say the account has no rules; stop. A number that no line has: say there
-  is no rule R<n>; stop. With a number, ask "Remove R<n> (<short>)?" with "Yes — delete the rule; new
-  sessions there follow New folders" (for `workspaces=1`: "Yes — delete the rule; Beezi tracks it again
-  unless another rule covers it") and "No — keep it"; only Yes goes on. Without one, pick a rule
+  is no rule R<n>; stop. With a number, ask "Remove R<n> (<short>)?" with
+  "Yes — delete the rule. New sessions there follow the default" (for `workspaces=1`:
+  "Yes — delete the rule. It's tracked again unless another rule covers it") and "No — keep it"; only
+  Yes goes on. Without one, pick a rule
   ("Which rule do you want to remove?"). Run EXACTLY
   `node "<plugin-root>/scripts/workspace.mjs" rule remove <n> --account <key>`
 
 Picking a rule: one choice per `R<n>.` line, "R<n>. <short> — <text after `→ ` up to ` account=`>";
 with only one line add "Cancel — change nothing". "Cancel" or a dismissal runs nothing. After
-`rule add`, `rule set` or `rule remove`, write its first line verbatim.
+`rule add`, `rule set` or `rule remove`, write its first line verbatim (it ends with " Undo:
+/beezi-local-settings undo" when there is a change to undo).
 
 ### One-workspace rules
 
 For an account with `workspaces=1` there is no workspace question anywhere. `<here>` and "its own
 rule" are as defined above. By the rest of the arguments: `remove <n>` → Remove (above) with rule `<n>`;
-`remove` → Remove; anything else, `add` included → ask "What do you want to do with rules?", offering
-only the choices that apply, in this order:
+`remove` → Remove; anything else, `add` included → show the card first (its lines verbatim, when there
+is one), then ask "What do you want to do with rules?", offering only the choices that apply, in this
+order:
 
 - "Don't track <here>" — the `here:` line has `rule=none`, or names a rule shown `→ tracked`. Run
   EXACTLY `node "<plugin-root>/scripts/workspace.mjs" rule add --current none --account <key>`
 - "Track <here> again" — `<here>`'s own rule is `not tracked`. Run EXACTLY, with that rule's number
   and without the Yes/No confirmation Remove uses:
   `node "<plugin-root>/scripts/workspace.mjs" rule remove <n> --account <key>`
-- "Don't track another folder or repo…" — Typed target, below, then run EXACTLY, with the flag it
-  picked: `node "<plugin-root>/scripts/workspace.mjs" rule add --folder '<value>' none --account <key>`
-  or `node "<plugin-root>/scripts/workspace.mjs" rule add --repo '<value>' none --account <key>`.
-  Offer it only when the `here:` line does not name a wider rule.
+- "Stop tracking another folder" — "pick a repo or folder with recent sessions"; Picker, below. Offer
+  it only when the `here:` line does not name a wider rule.
 - "Remove a rule" — there is an `R<n>.` line; use Remove, above.
-- "Done" — nothing else changes.
+- "Close" — nothing else changes.
 
-After any command, write its first line verbatim (a `✗` line too).
+After any command, write its first line verbatim (a `✗` line too; it ends with " Undo:
+/beezi-local-settings undo" when there is a change to undo).
+
+### Picker
+
+For "Stop tracking another folder" (one workspace) and "Add a rule for another folder or repo…"
+(several workspaces). Run EXACTLY (for you only):
+
+`node "<plugin-root>/scripts/workspace.mjs" places --account <key>`
+
+It prints a header line, then up to 3 places, each
+`F<i>. <short> (<label>), <n> sessions account=<key> kind=<repo|folder|outside> match=<…>` (a
+`kind=outside` line has no ` (<label>)`) followed by its own `F<i>-command=<command>` line, whose
+command ends in a literal `<tenants>`; last `places=<n>`.
+
+- `places=0` → Typed target, below.
+- Otherwise ask "Which repo or folder should Beezi stop tracking?" (one workspace) or "Which repo or
+  folder do you want a rule for?" (several), one choice per `F<i>.` line, "<short> — <label>, <n>
+  sessions" (for `kind=outside`: "sessions outside a project — <n> sessions"), then "Another folder
+  or repo… — type a folder path or a repo URL" and "Cancel — change nothing". "Another folder or
+  repo…" → Typed target. "Cancel" or a dismissal runs nothing.
+- A picked `F<i>.` line: for one workspace, run its `F<i>-command=` value with `<tenants>` replaced
+  by `none`; for several, ask the workspace question about that `F<i>.` line, then run its
+  `F<i>-command=` value with `<tenants>` replaced by `'<ids>'`. Never rebuild the command. Write its
+  first line verbatim.
 
 ### Typed target
 
@@ -176,21 +261,22 @@ stops. A reply is a repo (`--repo`) only when it contains `://`, starts with `gi
 included, is a folder (`--folder`). `<value>` is the
 reply trimmed; the templates already single-quote it, so first escape each `'` in the reply for the
 shell you run the command in: in bash or sh replace it with `'\''`, in PowerShell replace it with `''`
-(two single quotes) and also double each `‘`, `’`, `‚` and `‛` (PowerShell reads them as single quotes). For a one-workspace account that is all: run the calling step's command with `none`. For an
+(two single quotes) and also double each `‘`, `’`, `‚` and `‛` (PowerShell reads them as single quotes). For a one-workspace account that is all: run EXACTLY, with the flag it picked,
+`node "<plugin-root>/scripts/workspace.mjs" rule add --folder '<value>' none --account <key>` or
+`node "<plugin-root>/scripts/workspace.mjs" rule add --repo '<value>' none --account <key>`. For an
 account in several workspaces, first ask the workspace question about it (`kind=` `folder` or `repo`
-by the reply, `<label>` the typed folder, `<short>` its last path segment), then run the command with
-the resulting `<ids>`. The script validates the value; show its first line verbatim, errors included.
+by the reply, `<label>` the typed folder, `<short>` its last path segment), then run EXACTLY
+`node "<plugin-root>/scripts/workspace.mjs" rule add --folder '<value>' '<ids>' --account <key>` or
+`node "<plugin-root>/scripts/workspace.mjs" rule add --repo '<value>' '<ids>' --account <key>`. The script validates the value; show its first line verbatim, errors included.
 
 ## New folders
 
-Run EXACTLY and write its output verbatim as your reply text:
-`node "<plugin-root>/scripts/settings.mjs" new-folders`. Choose the account, then run EXACTLY (for you
-only): `node "<plugin-root>/scripts/workspace.mjs" new-folders --account <key>` — a summary line,
-`W.` lines, and last `new-folders=<ask|send|none> set=<yes|no> multi=yes account=<key>`.
+Choose the account. Its lines are the `<new-folders account="<key>">` block, for you only: a summary
+line, `W.` lines, and last `new-folders=<ask|send|none> set=<yes|no> multi=yes account=<key>`.
 
 Ask "For a repo or folder with no rule, where should analytics go?" with "Ask me — Beezi asks once per
 repo or folder, when a session starts there", "Send to… — pick the workspaces that get them", "Don't
-send — nothing from a repo or folder with no rule is uploaded"; add " (current)" to the one matching
+send — nothing from a repo or folder with no rule is sent"; add " (current)" to the one matching
 `new-folders=`.
 - "Ask me" → run EXACTLY `node "<plugin-root>/scripts/workspace.mjs" new-folders ask --account <key>`
 - "Don't send" → run EXACTLY `node "<plugin-root>/scripts/workspace.mjs" new-folders none --account <key>`
@@ -202,8 +288,7 @@ Write the command's first line verbatim.
 
 ## Account
 
-Run EXACTLY and write its output verbatim as your reply text:
-`node "<plugin-root>/scripts/settings.mjs" account`. Then: no `account=` line → say this machine is
+No `account=` line → say this machine is
 not linked and to run /beezi-local-login; stop. One → Refresh my Copilot plan. Several → ask "What do you
 want to do?" with "Refresh my Copilot plan — re-read which Copilot plan pays for this machine" and
 "Default account — pick which account /beezi-local-analytics reads from". A dismissal stops.
@@ -247,13 +332,12 @@ that account's plan stays unknown.
 
 ## Crash reports & status line
 
-Run EXACTLY and write its output verbatim as your reply text:
-`node "<plugin-root>/scripts/settings.mjs" privacy`.
-
-With a mode in the arguments, run it without asking, write its output verbatim, and stop:
+With a mode in the arguments, run it without asking (no read ran first), write its output verbatim,
+and stop:
 - `telemetry on|off|correlate|anonymous` → `node "<plugin-root>/scripts/telemetry.mjs" <mode>`
 - `statusline on` → `node "<plugin-root>/scripts/statusline-install.mjs"`
 - `statusline off` → `node "<plugin-root>/scripts/statusline-install.mjs" --uninstall`
+- `statusline badge on` or `statusline badge off` → `node "<plugin-root>/scripts/settings.mjs" set badge=<on|off>`
 
 Otherwise ask these two questions, one after the other:
 1. "How should Beezi crash reports work?" — "Correlate (recommended) — crash reports with an
@@ -261,14 +345,20 @@ Otherwise ask these two questions, one after the other:
    "Off — no crash reports; pending ones are deleted", "Anonymous — stay on, and delete the
    installation ID and the reports that carry it".
 2. "Should Beezi's status line record the model, context use and allow-all state of your Copilot
-   sessions?" — "On — your existing status line still looks the same", "Off".
+   sessions?" — "On — your existing status line still looks the same", then, only when
+   `statusline=on`, "On, with a Beezi badge — also shows where this folder's analytics go, like
+   Beezi → Acme, at the end of your status line", then "Off".
 
 Add ", current setting" to the choice matching `crash=`
-(`correlate`, `on`, `off`, `anonymous`) and the one matching `statusline=` (`on`, `off`). Then run only what changed: a different crash-report
-answer → `node "<plugin-root>/scripts/telemetry.mjs" <correlate|on|off|anonymous>`; a different
-status-line answer → `node "<plugin-root>/scripts/statusline-install.mjs"` for On, or with
-`--uninstall` for Off. Write each output verbatim; when nothing changed, say the settings are
-unchanged.
+(`correlate`, `on`, `off`, `anonymous`) and the one matching `statusline=` and `badge=`
+(`statusline=on badge=off` → "On", `statusline=on badge=on` → "On, with a Beezi badge",
+`statusline=off` → "Off"). Then run only what changed: a different crash-report
+answer → `node "<plugin-root>/scripts/telemetry.mjs" <correlate|on|off|anonymous>`; for the status
+line, "Off" from either On → `node "<plugin-root>/scripts/statusline-install.mjs" --uninstall`; "On" from
+Off → `node "<plugin-root>/scripts/statusline-install.mjs"`; "On, with a Beezi badge" from "On" →
+`node "<plugin-root>/scripts/settings.mjs" set badge=on`; "On" from "On, with a Beezi badge" →
+`node "<plugin-root>/scripts/settings.mjs" set badge=off`. Write each output verbatim; when nothing
+changed, say the settings are unchanged.
 
 If the user asks what crash reports collect: plugin and Copilot versions, OS, and which plugin file
 failed — never their code, prompts, file paths or repository names. Correlate is the recommended way

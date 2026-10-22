@@ -1,11 +1,11 @@
 // Argument resolution shared by the workspace subcommands: usage, --session, --account, workspace refs and the attendance check.
-import { AccountStatus, getDefaultKey, listAccounts } from '../../accounts/index-store.mjs';
-import { currentSessionId } from '../../host/current-session.mjs';
-import { findSessionWorkspaceByCwd, readSessionWorkspace } from '../../workspace/session-routes.mjs';
+import { AccountStatus, NO_SUCH_ACCOUNT, getDefaultKey, listAccounts } from '../../accounts/index-store.mjs';
 import { isSingleTenant, isMultiTenant, tenantsOf } from '../../workspace/tenants.mjs';
 import { refParts, resolveTenantRef } from '../tenant-flags.mjs';
 import { isUsableSessionId } from '../../core/session-id.mjs';
-import { readSessionHead } from '../../sources/cli/session-files.mjs';
+import { listSessionFiles, readSessionHead } from '../../sources/cli/session-files.mjs';
+import { planReviewPlaces } from '../../history/history-routing.mjs';
+import { ruleSessionCounts } from '../../workspace/route-describe.mjs';
 import { UserError } from '../../core/errors.mjs';
 import { checkInteractive } from '../../host/mode-guard.mjs';
 import { accountLabel } from '../../ux/workspace-lines.mjs';
@@ -18,8 +18,10 @@ export const USAGE = 'Usage: workspace.mjs rules [--table] [--session <id>] [--a
   + ' | rule add-all (<id|name|n>… | none) [--session <id>] [--account <ref>]'
   + ' | routes [--session <id>] [--account <ref>]'
   + ' | joined [add-all | done | pick (--repo <url> | --folder <path> | --outside) <id|name|n>] [--session <id>] [--account <ref>]'
-  + ' | new-folders [ask | send <id|name|n>… | none] [--session <id>] [--account <ref>]'
-  + ' | read <id|name|n> [--session <id>] [--account <ref>]';
+  + ' | new-folders [--history | ask | send <id|name|n>… | none] [--session <id>] [--account <ref>]'
+  + ' | read <id|name|n> [--session <id>] [--account <ref>]'
+  + ' | places [--session <id>] [--account <ref>]'
+  + ' | undo [--session <id>]';
 
 export function parseSessionFlag(argv) {
   const rest = [];
@@ -33,19 +35,6 @@ export function parseSessionFlag(argv) {
     rest.push(argv[i]);
   }
   return { session, rest };
-}
-
-// --session, then the session Copilot runs this command in, then the newest session recorded for this directory.
-export function resolveSession(flag) {
-  if (flag != null) return { sessionId: flag, state: readSessionWorkspace(flag) };
-  const own = currentSessionId(process.cwd());
-  if (own != null) return { sessionId: own, state: readSessionWorkspace(own) };
-  const byCwd = findSessionWorkspaceByCwd(process.cwd());
-  return byCwd == null ? { sessionId: null, state: null } : byCwd;
-}
-
-export function choiceDir(state) {
-  return state != null && state.cwd != null ? state.cwd : process.cwd();
 }
 
 // Refuses (prints ✗ and returns false) when the session answers questions without a person: a guessed answer must not be persisted.
@@ -74,7 +63,7 @@ export async function resolveAccount(key) {
   if (chosen == null && linked.length === 1) chosen = linked[0].key;
   if (chosen == null) throw new UserError('Several accounts are linked and none is the default. Pass --account <ref> (see /beezi-local-settings account).');
   const row = accounts.find((a) => a.key === chosen);
-  if (row == null) throw new UserError('No such linked account.');
+  if (row == null) throw new UserError(NO_SUCH_ACCOUNT);
   return row;
 }
 
@@ -113,11 +102,13 @@ export function requireNoneForSingle(row, refs) {
   throw new UserError(`${accountLabel(row)} has one workspace, so a rule can only stop tracking a repo or folder. Pass none.`);
 }
 
-// Ids/names/positions (comma lists too) in row order; `none` anywhere wins and means send nowhere.
+// Ids/names/positions (comma lists too) in row order; `none` alone means send nowhere, and none beside a workspace is refused.
 export function selection(row, refs) {
   const values = refValues(refs);
   if (values.length === 0) throw new UserError(USAGE);
-  if (values.some((v) => v.toLowerCase() === 'none')) return [];
+  const nones = values.filter((v) => v.toLowerCase() === 'none').length;
+  if (nones === values.length) return [];
+  if (nones > 0) throw new UserError('Pick workspaces or none, not both.');
   const picked = values.map((v) => resolveTenantRef(row, v));
   return tenantsOf(row).map((t) => t.id).filter((id) => picked.indexOf(id) !== -1);
 }
@@ -131,4 +122,10 @@ export async function afterRuleWrite(key, ctx, deps = {}) {
 // Past sessions come from the Copilot session-file index; the recorded directory is read from each session's head.
 export function pastSessionOptions(liveSessionId) {
   return { liveSessionId, readCwd: (p) => (readSessionHead(p) || {}).cwd || null };
+}
+
+// Last-30-days sessions per account, by the rule that routes them and Default, for the rules table.
+export async function sessionCountsByKey(rows, ctx, liveSessionId) {
+  const entries = await listSessionFiles();
+  return new Map(rows.map((row) => [row.key, ruleSessionCounts(row, planReviewPlaces(row, entries, ctx, pastSessionOptions(liveSessionId)))]));
 }

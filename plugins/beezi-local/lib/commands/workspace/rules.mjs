@@ -3,8 +3,10 @@ import os from 'os';
 import path from 'path';
 import { parseAccountFlag } from '../../accounts/index-store.mjs';
 import { removeWorkspaceRule, setWorkspaceRule } from '../../workspace/settings-store.mjs';
-import { initSessionWorkspace, listSessionWorkspaces, readSessionWorkspace, recordSessionRoute } from '../../workspace/session-routes.mjs';
-import { isSingleTenant, tenantsOf } from '../../workspace/tenants.mjs';
+import {
+  choiceDir, initSessionWorkspace, listSessionWorkspaces, readSessionWorkspace, recordSessionRoute, resolveSession,
+} from '../../workspace/session-routes.mjs';
+import { isMultiTenant, isSingleTenant, tenantsOf } from '../../workspace/tenants.mjs';
 import { resolveTargets } from '../../workspace/targets.mjs';
 import { createRouteContext, routeKeyForDir } from '../../workspace/route-key.mjs';
 import { outsideKey, rulesOf } from '../../workspace/rule-model.mjs';
@@ -19,15 +21,16 @@ import { UserError, friendlyMessage } from '../../core/errors.mjs';
 import { sessionFor } from '../../auth/recipients.mjs';
 import { syncAccountIfNeeded } from '../../billing/account-sync.mjs';
 import {
-  hereLine, newFoldersLabel, placeOf, ruleDone, ruleLine, rulesHeaderLine, sendList, tenantNames, workspaceLines,
-  workspacesUnknownLine,
+  hereLine, ruleAddedConfirmation, ruleLine, ruleRemovedConfirmation, ruleSetConfirmation, rulesAddedConfirmation, rulesHeaderLine,
+  sendList, withUndoHint, workspaceLines, workspacesUnknownLine,
 } from '../../ux/workspace-lines.mjs';
+import { recordUndo, routingOf } from '../../state/rule-undo.mjs';
 import { machineLine } from '../../ux/machine-lines.mjs';
 import {
-  USAGE, afterRuleWrite, choiceDir, mayPersist, pastSessionOptions, parseSessionFlag, requireKnownWorkspaces, requireMulti, requireNoneForSingle,
-  resolveAccount, resolveSession, selectedRows, selection,
+  USAGE, afterRuleWrite, mayPersist, pastSessionOptions, parseSessionFlag, requireKnownWorkspaces, requireMulti, requireNoneForSingle,
+  resolveAccount, selectedRows, selection, sessionCountsByKey,
 } from './args.mjs';
-import { displayPath, plural } from '../../core/text.mjs';
+import { displayPath } from '../../core/text.mjs';
 
 const NOT_LINKED = 'Beezi: this machine is not linked. Run /beezi-local-login to link an account.';
 const TARGET_FLAGS = ['--current', '--repo', '--folder', '--outside'];
@@ -87,6 +90,32 @@ export async function bindOpenSessions(row, indices, current, ctx) {
   }
 }
 
+// Prints a write's confirmation as the first stdout line (the undo hint unless the flow defers) and records it as the change undo reverts.
+// `before` is routingOf the raw row read before the write and `fresh` the raw row after it, so restoreRouting compares like with like.
+export function confirmChange(fresh, confirmation, before, cx) {
+  console.log(withUndoHint(confirmation.line, cx.deferUpload));
+  recordUndo({ account: fresh.key, summary: confirmation.summary, change: confirmation.change, was: confirmation.was, before, after: routingOf(fresh) });
+}
+
+// Sessions bound to a rule that is gone would keep sending by it: re-bind each to whatever still applies (none unbinds to New folders).
+// On a multi-workspace account each one's held reports are released and workspaces it newly reaches check in once.
+export async function rerouteGone(fresh, gone, ctx) {
+  const checkedIn = [];
+  for (const entry of listSessionWorkspaces()) {
+    const bound = entry.state.route[fresh.key];
+    if (bound == null || !gone.some((r) => r.kind === bound.kind && r.match === bound.match)) continue;
+    const prior = resolveTargets(fresh, entry.state).targets;
+    recordSessionRoute(entry.sessionId, fresh.key, routeForDir(fresh, entry.state.cwd, ctx));
+    if (!isMultiTenant(fresh)) continue;
+    releaseHeldQueue(fresh, entry.sessionId);
+    for (const id of resolveTargets(fresh, readSessionWorkspace(entry.sessionId)).targets) {
+      if (prior.indexOf(id) !== -1 || checkedIn.indexOf(id) !== -1) continue;
+      checkedIn.push(id);
+      await checkIn(fresh, id);
+    }
+  }
+}
+
 export async function rules(argv) {
   const { session, rest: afterSession } = parseSessionFlag(argv);
   const { account, rest: afterAccount } = await parseAccountFlag(afterSession);
@@ -98,10 +127,12 @@ export async function rules(argv) {
     console.log(NOT_LINKED);
     return;
   }
-  const dir = choiceDir(resolveSession(session).state);
+  const current = resolveSession(session);
+  const dir = choiceDir(current.state);
   const ctx = createRouteContext();
   if (table) {
-    console.log(rulesTableLines(rows, dir, ctx).join('\n'));
+    const countsByKey = await sessionCountsByKey(rows, ctx, current.sessionId);
+    console.log(rulesTableLines(rows, dir, ctx, { countsByKey }).join('\n'));
     return;
   }
   for (const row of rows) {
@@ -119,8 +150,7 @@ export async function rules(argv) {
       const tracked = r.tenantIds.length === 0 ? 'not tracked' : 'tracked';
       console.log(ruleLine(row, r, single ? tracked : sendList(row, r.tenantIds)));
     }
-    const key = routeKeyForDir(dir, ctx);
-    console.log(hereLine(row, key, key == null ? null : routeForDir(row, dir, ctx)));
+    console.log(hereLine(row, dir, ctx));
   }
 }
 
@@ -184,9 +214,11 @@ async function ruleAdd(argv, cx = { deferUpload: false }) {
   const key = ruleKey(target, choiceDir(current.state), ctx);
   const tenantIds = selection(row, refs);
   if (!(await mayPersist('saving a workspace rule', current.sessionId))) return;
+  const before = routingOf(row);
   const n = (await setWorkspaceRule(row.key, { kind: key.kind, match: key.match, label: key.label, tenantIds })).index;
-  console.log(ruleDone(row, key, tenantIds, false));
-  await bindOpenSessions(await resolveAccount(row.key), [n], current, ctx);
+  const fresh = await resolveAccount(row.key);
+  confirmChange(fresh, ruleAddedConfirmation(row, key, tenantIds, n), before, cx);
+  await bindOpenSessions(fresh, [n], current, ctx);
   await afterRuleWrite(row.key, cx, cx.deps);
   console.log(machineLine([['rule', n]]));
 }
@@ -202,9 +234,11 @@ async function ruleSet(argv, cx = { deferUpload: false }) {
   const tenantIds = selection(row, rest.slice(1));
   const current = resolveSession(session);
   if (!(await mayPersist('saving a workspace rule', current.sessionId))) return;
+  const before = routingOf(row);
   await setWorkspaceRule(row.key, { kind: found.kind, match: found.match, label: found.label, tenantIds });
-  console.log(ruleDone(row, found, tenantIds, true));
-  await bindOpenSessions(await resolveAccount(row.key), [found.index], current, createRouteContext());
+  const fresh = await resolveAccount(row.key);
+  confirmChange(fresh, ruleSetConfirmation(row, found, tenantIds), before, cx);
+  await bindOpenSessions(fresh, [found.index], current, createRouteContext());
   await afterRuleWrite(row.key, cx, cx.deps);
   console.log(machineLine([['rule', found.index]]));
 }
@@ -214,24 +248,13 @@ async function ruleRemove(argv, cx = { deferUpload: false }) {
   if (rest.length !== 1) throw new UserError(USAGE);
   const row = await resolveAccount(account);
   if (!(await mayPersist('removing a workspace rule'))) return;
+  const before = routingOf(row);
   const removed = await removeWorkspaceRule(row.key, String(rest[0]).replace(/^R/i, ''));
-  if (isSingleTenant(row)) {
-    console.log(`✓ Removed the rule for ${placeOf(removed)}. Beezi tracks it again unless another rule covers it.`);
-  } else {
-    console.log(`✓ Removed the rule for ${placeOf(removed)}. New sessions there follow New folders (${newFoldersLabel(row)}).`);
-  }
+  const fresh = await resolveAccount(row.key);
+  confirmChange(fresh, ruleRemovedConfirmation(row, removed), before, cx);
   await afterRuleWrite(row.key, cx, cx.deps);
   console.log(machineLine([['removed', removed.index]]));
-  // Sessions bound to the removed rule keep their state until something re-binds them: re-route each to whatever still applies.
-  if (isSingleTenant(row)) {
-    const fresh = await resolveAccount(row.key);
-    const ctx = createRouteContext();
-    for (const entry of listSessionWorkspaces()) {
-      const bound = entry.state.route[row.key];
-      if (bound == null || bound.kind !== removed.kind || bound.match !== removed.match) continue;
-      recordSessionRoute(entry.sessionId, row.key, routeForDir(fresh, entry.state.cwd, ctx));
-    }
-  }
+  await rerouteGone(fresh, [removed], createRouteContext());
 }
 
 // One rule per repo or folder that `routes` lists, all sending to the same workspaces.
@@ -246,6 +269,7 @@ async function ruleAddAll(argv, cx = { deferUpload: false }) {
   const ctx = createRouteContext();
   const groups = planUnruledRoutes(row, await listSessionFiles(), ctx, pastSessionOptions(current.sessionId));
   if (groups.length > 0 && !(await mayPersist('saving a workspace rule', current.sessionId))) return;
+  const before = routingOf(row);
   const added = [];
   for (const g of groups) {
     added.push((await setWorkspaceRule(row.key, { kind: g.kind, match: g.match, label: g.label, tenantIds })).index);
@@ -254,10 +278,9 @@ async function ruleAddAll(argv, cx = { deferUpload: false }) {
   if (n === 0) {
     console.log('✓ No repos or folders are waiting for a rule.');
   } else {
-    const those = n === 1 ? 'that repo or folder' : 'those repos and folders';
-    const where = tenantIds.length === 0 ? `${those} ${n === 1 ? 'is' : 'are'} not tracked` : `analytics for ${those} go to ${tenantNames(row, tenantIds)}`;
-    console.log(`✓ Added ${plural(n, 'rule')}: ${where}.`);
-    await bindOpenSessions(await resolveAccount(row.key), added, current, ctx);
+    const fresh = await resolveAccount(row.key);
+    confirmChange(fresh, rulesAddedConfirmation(row, n, tenantIds), before, cx);
+    await bindOpenSessions(fresh, added, current, ctx);
   }
   await afterRuleWrite(row.key, cx, cx.deps);
   console.log(machineLine([['rules-added', n]]));

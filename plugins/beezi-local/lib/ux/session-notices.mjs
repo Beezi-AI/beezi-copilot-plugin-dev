@@ -40,14 +40,6 @@ export function accountLabel(session, several) {
   return several ? `Beezi (${(isMultiTenant(session) ? null : session.tenantName) || session.email || session.key})` : 'Beezi';
 }
 
-// A target clone of a multi-workspace account names its workspace, and its email when several accounts are linked.
-export function targetLabel(session, several) {
-  if (!isMultiTenant(session) || session.tenantId == null) return accountLabel(session, several);
-  const tenant = (session.tenants || []).find((t) => t.id === session.tenantId);
-  const workspace = (tenant && tenant.name) || session.tenantId;
-  return several ? `Beezi (${session.email || session.key} · ${workspace})` : `Beezi (${workspace})`;
-}
-
 // Tells a dark workspace it is dark, and points at the login flow wherever the one-time history pull has not
 // completed yet (the backfill is the last step of /beezi-local-login); null when there is nothing to say.
 export function trackingPolicyNotice(tracking) {

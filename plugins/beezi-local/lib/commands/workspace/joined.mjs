@@ -4,6 +4,7 @@ import { markTenantsReviewed, setWorkspaceRule } from '../../workspace/settings-
 import { joinTenantNames, newTenantsOf, tenantsOf } from '../../workspace/tenants.mjs';
 import { newFoldersOf } from '../../workspace/targets.mjs';
 import { createRouteContext } from '../../workspace/route-key.mjs';
+import { choiceDir, resolveSession } from '../../workspace/session-routes.mjs';
 import { isLineSafePlace } from '../../workspace/rule-model.mjs';
 import { keepCurrentRules, placeNow, planReviewPlaces } from '../../history/history-routing.mjs';
 import { listSessionFiles } from '../../sources/cli/session-files.mjs';
@@ -14,12 +15,12 @@ import {
 import { machineLine } from '../../ux/machine-lines.mjs';
 import { resolveTenantRef } from '../tenant-flags.mjs';
 import {
-  USAGE, afterRuleWrite, choiceDir, mayPersist, pastSessionOptions, parseSessionFlag, requireMulti, resolveAccount, resolveSession,
-  selectedRows,
+  USAGE, afterRuleWrite, mayPersist, pastSessionOptions, parseSessionFlag, requireMulti, resolveAccount, selectedRows,
 } from './args.mjs';
 import { bindOpenSessions, parseRuleTarget, ruleKey } from './rules.mjs';
 
-// Accounts that joined a workspace since their last re-pick here: every place to re-pick, with where it sends now (login Step 5a, /beezi-local-sync Step 1).
+// Accounts that joined a workspace since their last re-pick here: every place to re-pick, with where it sends now (login Step 5a, /beezi-local-sync Step 1);
+// returns how many J lines it printed.
 export async function joined(argv, cx = { deferUpload: false }) {
   const [sub, ...after] = argv;
   if (sub === 'add-all') { await joinedAddAll(after, cx); return; }
@@ -52,6 +53,7 @@ export async function joined(argv, cx = { deferUpload: false }) {
     console.log(commandLine('done-command', `joined done --account ${row.key}${deferSuffix(cx.deferUpload)}`));
   }
   console.log(machineLine([['joined', total]]));
+  return total;
 }
 
 // A place's current targets (none if pending) plus addIds, kept to current members and order; add-all pre-filters empty/pending places.
