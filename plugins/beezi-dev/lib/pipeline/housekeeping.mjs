@@ -13,11 +13,9 @@ import {
 } from '../repo/repo-map.mjs';
 import { stateDir } from '../config/paths.mjs';
 import { pruneStale } from '../state/prune.mjs';
-import { apiBase, ENDPOINTS } from '../config/api.mjs';
 import { resolveFetch } from '../platform/compat-fetch.mjs';
 import { listAccounts } from '../accounts/index-store.mjs';
 import { linkedSessions } from '../auth/recipients.mjs';
-import { requestJson } from '../platform/http.mjs';
 import { readBillingConfig } from '../billing/billing-config.mjs';
 import { reconcileBillingConfig, ReconcileOutcome } from '../billing/plan-reconcile.mjs';
 import { readVscodeEntitlements } from '../sources/vscode/entitlement.mjs';
@@ -68,19 +66,6 @@ export function discoverRepos(cwd, gitImpl, map, deps = {}) {
     }
   }
   return { map, dirty };
-}
-
-export async function announceRepo(cwd, session, deps, gitImpl) {
-  const remote = resolveOriginRemote(gitImpl, cwd);
-  if (!remote) return null; // not a git repo — silent
-  try {
-    const res = await requestJson(`${apiBase()}${ENDPOINTS.reposStatus}`, session, { body: { remote } }, deps);
-    if (!res.ok || res.body == null) return null;
-    const { connected, projectName } = res.body;
-    return connected
-      ? `Beezi: repo connected${projectName ? ` to "${projectName}"` : ''}. Task-branch sessions will be tracked.`
-      : 'Beezi: this repo is not connected to Beezi. No analytics tracked here.';
-  } catch { return null; } // offline — silent
 }
 
 // Resolves after `ms` (unref'd, so it never holds a process open); `cancel` drops it.

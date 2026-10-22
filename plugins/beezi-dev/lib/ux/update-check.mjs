@@ -3,7 +3,7 @@ import { pluginRoot, readPluginManifest } from '../config/plugin-root.mjs';
 import { updateCheckFile } from '../config/paths.mjs';
 import { updateManifestUrl } from '../config/api.mjs';
 import { getJson } from '../platform/http.mjs';
-import { isNewer } from '../core/version.mjs';
+import { compareVersions, isNewer } from '../core/version.mjs';
 
 // Exported so test/update-check.test.mjs seeds cache records with it rather than hard-coding a
 // number that a later bump would silently desync.
@@ -101,33 +101,54 @@ async function fetchRemote(pluginName, nowIso, deps) {
   }
 }
 
+// The two terminal commands that update this plugin, in order: shared by the SessionStart nudge and /beezi-dev-status
+// so both always name the same steps. null when the manifest names no usable marketplace.
+export function updateCommands(pluginName, marketplaceName) {
+  if (!isPlain(MARKETPLACE_NAME, marketplaceName)) return null;
+  return [`copilot plugin marketplace update ${marketplaceName}`, `copilot plugin update ${pluginName}`];
+}
+
+// The last step of every update hint: the session-start notice, /beezi-dev-status and /beezi-dev-release-notes.
+export const APPLY_UPDATE = 'restart Copilot to apply it';
+
 // Names the exact commands: "update the plugin" is not actionable without knowing which
 // marketplace it came from. A manifest with no name leaves no command to name, so the interactive
 // menu is offered rather than printing `beezi-dev@undefined`.
 export function composeNudge(local, record) {
   if (!isPlain(VERSION_TEXT, record.latestVersion)) return null;
   const head = `Beezi: a newer ${local.name} is published — ${local.version} → ${record.latestVersion}.`;
-  if (!isPlain(MARKETPLACE_NAME, record.marketplaceName)) {
-    return `${head} Run /plugin to update it, then start a new Copilot session to apply it.`;
+  const commands = updateCommands(local.name, record.marketplaceName);
+  if (commands == null) {
+    return `${head} Run /plugin to update it, then ${APPLY_UPDATE}.`;
   }
-  return `${head} Run: copilot plugin marketplace update ${record.marketplaceName}`
-    + `, then copilot plugin update ${local.name}`
-    + ' (in the Copilot app: Customize → Plugins → Update) — then start a new Copilot session to apply it.';
+  return `${head} Run: ${commands[0]}, then ${commands[1]}`
+    + ` (in the Copilot app: Customize → Plugins → Update) — then ${APPLY_UPDATE}.`;
+}
+
+// The newest published reading for the installed plugin: the cached one while fresh, else fetched; when the fetch
+// fails the last cached reading stands in, flagged `stale`. { local, record, stale }; never throws.
+export async function readLatest(deps = {}) {
+  try {
+    const local = readLocalPlugin(deps);
+    if (local == null) return { local: null, record: null, stale: false };
+    const now = deps.now == null ? new Date() : deps.now;
+    let cached = readUpdateCheck(deps);
+    // A reading about a DIFFERENT plugin name (variant swap under one BEEZI_COPILOT_HOME) says nothing.
+    if (cached != null && cached.pluginName !== local.name) cached = null;
+    if (isFresh(cached, now.getTime())) return { local: local, record: cached, stale: false };
+    const fetched = await fetchRemote(local.name, now.toISOString(), deps);
+    if (fetched != null) return { local: local, record: fetched, stale: false };
+    return { local: local, record: cached, stale: cached != null };
+  } catch {
+    return { local: null, record: null, stale: false };
+  }
 }
 
 // The one-line nudge, or null when there is nothing to say. Best-effort by contract: never throws.
 export async function checkForUpdate(deps = {}) {
   try {
-    const local = readLocalPlugin(deps);
-    if (local == null) return null;
-    const now = deps.now == null ? new Date() : deps.now;
-    let record = readUpdateCheck(deps);
-    // A reading about a DIFFERENT plugin name (variant swap under one BEEZI_COPILOT_HOME) says nothing.
-    if (record != null && record.pluginName !== local.name) record = null;
-    if (!isFresh(record, now.getTime())) {
-      record = await fetchRemote(local.name, now.toISOString(), deps);
-    }
-    if (record == null) return null;
+    const { local, record, stale } = await readLatest(deps);
+    if (local == null || record == null || stale) return null;
     // Re-decided on every read against the version installed RIGHT NOW, never persisted. A user
     // who took the update sees silence on the very next start, before the cache expires.
     if (!isNewer(record.latestVersion, local.version)) return null;
@@ -135,4 +156,62 @@ export async function checkForUpdate(deps = {}) {
   } catch {
     return null;
   }
+}
+
+// 'update' | 'current' | 'ahead' | 'unknown' (not comparable) | 'unchecked' (no usable reading), by the same
+// comparison as checkForUpdate, so /beezi-dev-status never contradicts the session-start notice.
+function versionStatus(local, record) {
+  if (record == null || !isPlain(VERSION_TEXT, record.latestVersion)) return 'unchecked';
+  const order = compareVersions(record.latestVersion, local.version);
+  if (order === 1) return 'update';
+  if (order === 0) return 'current';
+  return order === -1 ? 'ahead' : 'unknown';
+}
+
+// What /beezi-dev-status shows about the plugin, from a readLatest() answer: { local, latest, status, marketplace }.
+export function pluginInfo(reading) {
+  const local = reading == null ? null : reading.local;
+  if (local == null) return { local: null };
+  const status = versionStatus(local, reading.record);
+  const record = status === 'unchecked' ? null : reading.record;
+  return {
+    local: local,
+    latest: record == null ? null : { version: record.latestVersion, checkedAt: record.checkedAt, stale: reading.stale },
+    status: status,
+    marketplace: record == null ? null : record.marketplaceName,
+  };
+}
+
+// `YYYY-MM-DD HH:MM UTC` — fixed, so the output reads the same on every machine and locale.
+function formatTime(iso) {
+  const ms = Date.parse(typeof iso === 'string' ? iso : '');
+  if (Number.isNaN(ms)) return null;
+  return `${new Date(ms).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+}
+
+// The Plugin field's value: "0.1.93, the newest", "0.1.92. Update available: 0.1.93", "0.1.93 (could not check for updates)".
+export function pluginText(info) {
+  if (info == null || info.local == null) return 'unknown (could not read its version)';
+  const version = info.local.version;
+  const latest = info.latest;
+  if (info.status === 'update' && latest != null) {
+    const seen = latest.stale ? ` (could not check now; last seen ${formatTime(latest.checkedAt) || 'earlier'})` : '';
+    return `${version}. Update available: ${latest.version}${seen}`;
+  }
+  if (latest == null || latest.stale) return `${version} (could not check for updates)`;
+  if (info.status === 'current') return `${version}, the newest`;
+  if (info.status === 'ahead') return `${version}, newer than the published ${latest.version}`;
+  return `${version} (could not compare it with the published ${latest.version})`;
+}
+
+// How to update, only when a newer version is out: the same commands and app path as the SessionStart notice.
+export function updateSteps(info) {
+  if (info == null || info.local == null || info.status !== 'update' || info.latest == null) return [];
+  const commands = updateCommands(info.local.name, info.marketplace);
+  return [
+    `To update to ${info.latest.version}:`,
+    commands == null ? '  Run /plugin to update it.' : `  Run: ${commands[0]}, then ${commands[1]}`,
+    '  In the Copilot app: Customize → Plugins → Update.',
+    `  Then ${APPLY_UPDATE}.`,
+  ];
 }

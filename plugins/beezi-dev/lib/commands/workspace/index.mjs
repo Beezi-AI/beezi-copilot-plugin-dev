@@ -1,4 +1,4 @@
-// workspace.mjs: dispatches rules, rule, routes, joined, new-folders and read.
+// workspace.mjs: dispatches rules, rule, routes, joined, new-folders, read, places and undo.
 import { UserError } from '../../core/errors.mjs';
 import { USAGE } from './args.mjs';
 import { rule, rules } from './rules.mjs';
@@ -6,9 +6,11 @@ import { routes } from './routes.mjs';
 import { joined } from './joined.mjs';
 import { newFolders } from './new-folders.mjs';
 import { read } from './read.mjs';
+import { places } from './places.mjs';
+import { undo } from './undo.mjs';
 import { takeDeferFlag } from '../../history/pending-trigger.mjs';
 
-const SUBCOMMANDS = { rules, rule, routes, joined, 'new-folders': newFolders, read };
+const SUBCOMMANDS = { rules, rule, routes, joined, 'new-folders': newFolders, read, places, undo };
 
 // --defer-upload is taken from anywhere in argv once, here, and reaches the handlers as cx.deferUpload.
 export async function runWorkspace(argv, deps = {}) {

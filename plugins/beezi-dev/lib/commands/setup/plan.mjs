@@ -23,7 +23,7 @@ export function vscodeSkipped(login) {
 }
 
 // A machine line's value in the capture output, or null.
-function machineValue(text, key) {
+export function machineValue(text, key) {
   const line = lastLine(text, new RegExp(`^${key}=`));
   return line === null ? null : line.slice(key.length + 1);
 }

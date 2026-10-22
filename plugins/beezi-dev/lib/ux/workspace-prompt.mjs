@@ -5,18 +5,19 @@ import { resolveTargets } from '../workspace/targets.mjs';
 import { QUEUE_HOLD_MS } from '../contract/queue-policy.mjs';
 import { bindSessionRoutes } from '../workspace/routing.mjs';
 import { createRouteContext, routeKeyForDir } from '../workspace/route-key.mjs';
-import { shortLabel, usesRules } from '../workspace/rule-model.mjs';
+import { ruleReasonText, rulesOf, shortLabel, usesRules } from '../workspace/rule-model.mjs';
 import { unattendedStatus, UnattendedSignal } from '../host/attendance.mjs';
 import { displayText } from '../auth/whoami.mjs';
 import { pluginRoot as installRoot } from '../config/plugin-root.mjs';
 import { AccountStatus, listAccounts as _listAccounts } from '../accounts/index-store.mjs';
 import { markJoinNoticed } from '../workspace/settings-store.mjs';
 import { sessionFor } from '../auth/recipients.mjs';
-import { joinNames } from '../core/text.mjs';
 
 // Only a new session asks; resume never does (Copilot has no clear or compact source).
 export const ASK_SOURCES = ['startup', 'new'];
 const ALL_LABEL = 'All of these workspaces';
+const SEVERAL_LINE = 'You can pick more than one: type their names separated by commas.';
+const DONT_TRACK_MIXED = '"Don\'t track" can\'t be combined with a workspace — pick one or the other.';
 // With no autopilot signal at all the ask cannot be told from an auto-answered one, so it relays a line instead.
 const RELAY_TEXT = 'Tell the user in one line: "Beezi is holding this folder\'s analytics until you choose a workspace. Run /beezi-dev-settings rules."';
 
@@ -62,12 +63,6 @@ export function nameOf(row, id) {
   return t != null && t.name ? t.name : id;
 }
 
-// "A", "A and B", "A, B and C".
-function names(row, ids) {
-  const list = ids.map((id) => nameOf(row, id));
-  return joinNames(list);
-}
-
 // How the targets notice names a place: a folder's ~ path, a repo's name, or sessions outside a project.
 function noticePlace(key) {
   if (key == null) return 'this folder';
@@ -76,7 +71,7 @@ function noticePlace(key) {
   return inline(shortLabel(key)) || 'this folder';
 }
 
-// The question wording for this directory: a repo, a folder, or the one "outside a project" place.
+// The question wording for this session's own directory: a repo, a folder, or the one "outside a project" place.
 function placeOf(key) {
   if (key != null && key.kind === 'outside') {
     return {
@@ -84,12 +79,14 @@ function placeOf(key) {
       dontTrack: 'Don\'t track these',
     };
   }
-  const short = shortLabel(key);
+  const short = inline(shortLabel(key));
   // A folder rule covers everything under it, so its question names the whole path and says so.
-  const asked = key != null && key.kind === 'folder' ? `${inline(key.label)} (and everything inside it)` : inline(short);
+  const asked = key != null && key.kind === 'folder'
+    ? `${inline(key.label)}, the folder you're in (and everything inside it),`
+    : `${short}, the repo you're in,`;
   return {
     question: `Where should analytics for ${asked} go?`,
-    dontTrack: key != null && key.kind === 'repo' ? 'Don\'t track this repo' : 'Don\'t track this folder',
+    dontTrack: `Don't track ${short}`,
   };
 }
 
@@ -100,14 +97,14 @@ function choiceList(choices) {
 
 // One account's single-choice question and the command its answer runs. ask_user choices are
 // plain strings with no descriptions or multi-select, so several workspaces go through "All of these workspaces"
-// or a typed comma list, which the CLI resolves by id, name or position and refuses when unknown.
+// or typed names, which the question invites and the CLI resolves by id, name or position and refuses when unknown.
 function accountAsk(row, resolved, place, { sessionId, root, several }) {
   const tenants = resolved.tenants.filter((t) => resolved.askTenants.indexOf(t.id) !== -1);
   const label = (t) => inline(t.name ? t.name : t.id);
   const choices = tenants.map(label).concat([ALL_LABEL, place.dontTrack]);
   return {
     row,
-    question: several ? `${place.question} (${emailOf(row)})` : place.question,
+    question: `${place.question}${several ? ` (${emailOf(row)})` : ''} ${SEVERAL_LINE}`,
     choices,
     command: `node "${root}/scripts/workspace.mjs" rule add --current --session ${sessionId} --account ${row.key} '<ids>'`,
     ids: tenants.map((t) => `${label(t)} = ${inline(t.id)}${inline(roleLabel(t)) ? ` (${inline(roleLabel(t))})` : ''}`).join(', '),
@@ -122,7 +119,8 @@ function promptText(asks) {
     const lead = several ? `For ${emailOf(ask.row)}, use` : 'Use';
     return `${lead} the ask_user tool to ask: "${ask.question}" with the choices ${choiceList(ask.choices)}.`
       + ` Then run exactly \`${ask.command}\`. \`<ids>\` is the chosen workspace's id (${ask.ids}), \`${ask.allIds}\` when "${ALL_LABEL}" is chosen,`
-      + ` the workspace names unchanged when the user types several separated by commas, or \`none\` when "${ask.dontTrack}" is chosen; it wins over the others.`
+      + ` the workspace names unchanged when the user types several separated by commas, or \`none\` when "${ask.dontTrack}" is the whole answer.`
+      + ` When the answer has "${ask.dontTrack}" together with a workspace, run nothing and ask the same question once more, starting with ${DONT_TRACK_MIXED} A second mixed answer is a dismissal.`
       + ` Before running it, escape each ' inside '<ids>' for the shell you run it in: '\\'' in bash or sh, '' in PowerShell, where each ‘ ’ ‚ ‛ is doubled too.`;
   });
   const head = 'Before doing anything else, ask the user where these analytics go.'
@@ -173,52 +171,30 @@ export async function buildWorkspacePrompt(input, deps = {}) {
   return promptText(asks);
 }
 
-// SessionStart: { context, notTracked } or null. `context` is one line per account for the model; `notTracked` is the
-// "is not tracked (your rule)" lines, which the hook relays to the user. An unattended session that is waiting for a choice says its reports are held.
+// "rule R1" for the stored rule a bound route came from (any outside rule matches an outside route), else "rule".
+// The notice names the rule's own place, so it is never "for" a parent folder.
+function ruleName(row, rule) {
+  const stored = rulesOf(row).find((r) => r.kind === rule.kind && (r.kind === 'outside' || r.match === rule.match));
+  return ruleReasonText(stored == null ? null : stored.index, true, null);
+}
+
+// SessionStart: the "→ not tracked" lines the hook relays to the user, one per account whose own rule sends nothing
+// from here, or null when none. New folders set to Don't send was chosen machine-wide, so it is never relayed (D2).
 export async function buildTargetsNotice(input, deps = {}) {
   if (input == null || typeof input.session_id !== 'string' || input.session_id === '') return null;
   const rows = await linkedRows(deps);
   const state = readSessionWorkspace(input.session_id);
   // A no-rules one-workspace row can never produce a line here (resolveTargets gives 'single'), so skip its credential read.
   const shown = await withUsableLogin(rows.filter((row) => isMultiTenant(row) || usesRules(row)), deps);
-  const ctx = createRouteContext();
-  let here;
-  const hereKey = () => {
-    if (here === undefined) here = routeKeyForDir(state != null && state.cwd != null ? state.cwd : inputCwd(input), ctx);
-    return here;
-  };
-  let unattended = null;
-  const isUnattendedNow = () => {
-    if (unattended == null) unattended = (deps.unattendedStatus || unattendedStatus)({ input, sessionId: input.session_id }).unattended;
-    return unattended;
-  };
-  const context = [];
-  const notTracked = [];
+  const lines = [];
   for (const row of shown) {
     const resolved = resolveTargets(row, state);
-    const multi = isMultiTenant(row);
-    const excluded = resolved.source === 'rule' && resolved.targets.length === 0;
-    if (multi ? !(resolved.multi && (!resolved.pendingAsk || isUnattendedNow())) : !excluded) continue;
+    if (resolved.source !== 'rule' || resolved.targets.length !== 0) continue;
     const prefix = rows.length > 1 ? `Beezi (${emailOf(row)})` : 'Beezi';
-    const key = resolved.rule != null ? resolved.rule : hereKey();
-    const where = noticePlace(key);
-    if (resolved.pendingAsk) {
-      const label = inline(shortLabel(key));
-      context.push(`${prefix} → held${label ? ` · ${label}` : ''} until you choose a workspace (run /beezi-dev-settings rules)`);
-    } else if (excluded) {
-      notTracked.push(`${prefix}: ${where} ${key != null && key.kind === 'outside' ? 'are' : 'is'} not tracked (your rule). Change with /beezi-dev-settings.`);
-    } else if (resolved.source === 'none') {
-      context.push(`${prefix}: analytics from ${where} are not uploaded (new folders: don't send). Change with /beezi-dev-settings.`);
-    } else {
-      const fallback = resolved.source === 'new-folders' ? ' (new folder default)' : '';
-      context.push(`${prefix}: analytics from ${where} go to ${names(row, resolved.targets)}${fallback}. Change with /beezi-dev-settings.`);
-    }
+    const route = `${noticePlace(resolved.rule)} → not tracked (${ruleName(row, resolved.rule)})`;
+    lines.push(`${prefix}: ${route}. Nothing from this session is sent. Track it again with /beezi-dev-settings.`);
   }
-  if (context.length === 0 && notTracked.length === 0) return null;
-  return {
-    context: context.length === 0 ? null : context.join('\n'),
-    notTracked: notTracked.length === 0 ? null : notTracked.join('\n'),
-  };
+  return lines.length === 0 ? null : lines.join('\n');
 }
 
 // SessionStart: the line announcing workspaces joined since the last notice here, and how to mark them announced once relayed; null when none.

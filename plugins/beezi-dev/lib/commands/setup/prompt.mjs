@@ -141,17 +141,29 @@ async function choose(p, question, options, opts) {
   }
 }
 
-async function chooseMany(p, question, options) {
+// The exclusive index in picked when it sits beside another pick, else -1.
+export function mixedExclusive(picked, exclusive) {
+  const found = picked.find((i) => exclusive.indexOf(i) !== -1);
+  return picked.length > 1 && found !== undefined ? found : -1;
+}
+
+async function chooseMany(p, question, options, opts) {
   if (p.closed) return null;
   if (options.length === 0) return [];
-  if (fitsScreen(p, options.length + 2) && rawOn(p)) return keyChooseMany(p, question, options);
+  const exclusive = opts && opts.exclusive ? opts.exclusive : [];
+  if (fitsScreen(p, options.length + 2) && rawOn(p)) return keyChooseMany(p, question, options, exclusive);
   showMenu(p, question, options, -1);
   for (;;) {
-    const answer = await ask(p, `${p.style.boldCyan('Choose one or more (for example 1,3), or press Enter to skip:')} `);
+    const answer = await ask(p, `${p.style.boldCyan('Choose one or more (for example 1,2), or press Enter to skip:')} `);
     if (answer === null) return null;
     const picked = parseNumbers(answer, options.length);
-    if (picked !== null) return picked;
-    p.output.write(`${p.style.yellow(`Enter numbers from 1 to ${options.length}, separated by commas.`)}\n`);
+    if (picked !== null) {
+      const mixed = mixedExclusive(picked, exclusive);
+      if (mixed === -1) return picked;
+      p.output.write(`${p.style.yellow(`"${options[mixed].label}" can't be combined with other choices.`)}\n`);
+    } else {
+      p.output.write(`${p.style.yellow(`Enter numbers from 1 to ${options.length}, separated by commas.`)}\n`);
+    }
   }
 }
 
@@ -189,7 +201,7 @@ export function createPrompt(io) {
   const p = promptState(io);
   return {
     choose: (question, options, opts) => choose(p, question, options, opts),
-    chooseMany: (question, options) => chooseMany(p, question, options),
+    chooseMany: (question, options, opts) => chooseMany(p, question, options, opts),
     confirm: (question, defaultYes) => confirm(p, question, defaultYes),
     text: (question) => text(p, question),
     close: () => close(p),

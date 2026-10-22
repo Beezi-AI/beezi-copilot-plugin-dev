@@ -150,10 +150,21 @@ export function findSessionWorkspaceByCwd(cwd) {
   return best;
 }
 
+// --session, then the session Copilot runs this command in, then the newest session recorded for this directory.
+export function resolveSession(flag) {
+  if (flag != null) return { sessionId: flag, state: readSessionWorkspace(flag) };
+  const own = currentSessionId(process.cwd());
+  if (own != null) return { sessionId: own, state: readSessionWorkspace(own) };
+  const byCwd = findSessionWorkspaceByCwd(process.cwd());
+  return byCwd == null ? { sessionId: null, state: null } : byCwd;
+}
+
+// The folder the session recorded, else this process's own.
+export function choiceDir(state) {
+  return state != null && state.cwd != null ? state.cwd : process.cwd();
+}
+
 // The workspace state of the Copilot session a command runs in: its id, else the newest session here.
-export function currentSessionWorkspace(cwd = process.cwd()) {
-  const sessionId = currentSessionId(cwd);
-  if (sessionId != null) return readSessionWorkspace(sessionId);
-  const byCwd = findSessionWorkspaceByCwd(cwd);
-  return byCwd == null ? null : byCwd.state;
+export function currentSessionWorkspace() {
+  return resolveSession(null).state;
 }

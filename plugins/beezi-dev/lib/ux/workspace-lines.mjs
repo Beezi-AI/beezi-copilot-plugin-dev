@@ -1,7 +1,10 @@
 // Text for /beezi-dev-settings rules and workspaces: account, workspace and place labels, and every workspace.mjs machine line.
 import { newFoldersOf } from '../workspace/targets.mjs';
-import { roleLabel, tenantById, tenantsOf } from '../workspace/tenants.mjs';
+import { isSingleTenant, joinTenantNames, roleLabel, tenantById, tenantsOf } from '../workspace/tenants.mjs';
 import { shortLabel } from '../workspace/rule-model.mjs';
+import { routeKeyForDir } from '../workspace/route-key.mjs';
+import { routeForDir } from '../workspace/routing.mjs';
+import { placeOfDir, routeOfDir } from '../workspace/route-describe.mjs';
 import { pluginRoot } from './workspace-prompt.mjs';
 import { machineLine, withFields } from './machine-lines.mjs';
 import { plural } from '../core/text.mjs';
@@ -46,6 +49,67 @@ export function placeOf(key) {
 // A rule or place in a machine line: its short name, then its full label in parentheses (none for outside).
 export function labeled(key) {
   return key.kind === 'outside' ? shortLabel(key) : `${shortLabel(key)} (${key.label})`;
+}
+
+// A literal /beezi-dev-settings, so variant builds rename it with the other skill names.
+const UNDO_HINT = ' Undo: /beezi-dev-settings undo';
+const DONE = '✓ ';
+
+// Where a write sends, in a confirmation line: "Acme and Northwind" or "not tracked".
+export function targetWords(row, ids) {
+  return ids.length === 0 ? 'not tracked' : joinTenantNames(row, ids);
+}
+
+// A write's confirmation: its line, and the wording undo uses (`change`, default the line without "✓ "; `was` a set's old target).
+function confirmation(line, change = line.slice(DONE.length), was = null) {
+  return { line, summary: line.slice(DONE.length), change, was };
+}
+
+export function ruleAddedConfirmation(row, key, tenantIds, n) {
+  return confirmation(`${DONE}${placeOf(key)} → ${targetWords(row, tenantIds)} (rule R${n}).`);
+}
+
+export function ruleSetConfirmation(row, rule, tenantIds) {
+  const change = `${placeOf(rule)} → ${targetWords(row, tenantIds)} (rule R${rule.index}).`;
+  const was = targetWords(row, rule.tenantIds);
+  return confirmation(`${DONE}${change} Before: ${was}.`, change, was);
+}
+
+// `row` is the account before the removal: its kind and New folders say what the place follows now.
+export function ruleRemovedConfirmation(row, removed) {
+  const ruleText = `rule R${removed.index} (${placeOf(removed)}).`;
+  const follows = isSingleTenant(row)
+    ? 'It\'s tracked again unless another rule covers it.'
+    : `New sessions there follow the default (${newFoldersLabel(row)}).`;
+  return confirmation(`${DONE}Removed ${ruleText} ${follows}`, `removed ${ruleText}`);
+}
+
+export function rulesAddedConfirmation(row, n, tenantIds) {
+  const those = n === 1 ? 'that repo or folder' : 'those repos and folders';
+  const where = tenantIds.length === 0 ? `${those} ${n === 1 ? 'is' : 'are'} not tracked` : `${those} → ${joinTenantNames(row, tenantIds)}`;
+  const rulesText = `${plural(n, 'rule')}: ${where}.`;
+  return confirmation(`${DONE}Added ${rulesText}`, `added ${rulesText}`);
+}
+
+export function newFoldersConfirmation(row, mode, tenantIds) {
+  if (mode === 'send') return confirmation(`${DONE}New folders → ${joinTenantNames(row, tenantIds)}.`);
+  if (mode === 'none') return confirmation(`${DONE}New folders: not tracked.`);
+  return confirmation(`${DONE}New folders: Ask me — Beezi asks once per repo or folder.`);
+}
+
+// The undo hint is left off when the calling flow uploads next (login, setup).
+export function withUndoHint(line, defer) {
+  return defer ? line : `${line}${UNDO_HINT}`;
+}
+
+export const UNDO_NOTHING = 'Nothing to undo.';
+export const UNDO_CHANGED = 'Nothing undone: the rules changed after that change.';
+export const UNDO_MISSING = 'Nothing to undo: that account is no longer linked.';
+
+// The undo confirmation from the recorded change.
+export function undoneLine(record) {
+  const back = record.was == null ? '' : ` It's back to ${record.was}.`;
+  return `${DONE}Undid your last change: ${record.change}${back} Sessions already uploaded stay where they went.`;
 }
 
 export function ruleDone(row, key, tenantIds, changed) {
@@ -108,12 +172,28 @@ export function ruleLine(row, rule, sends) {
   ]);
 }
 
-// This folder's place (`key`, null when unknown) and the rule that routes it (`route`, null when none).
-export function hereLine(row, key, route) {
+// The `here:` line: this directory's place, its rule, where it sends now (now=), its path (none outside a project), then the machine fields with match= last.
+export function hereLine(row, dir, ctx) {
+  const key = routeKeyForDir(dir, ctx);
   if (key == null) return withFields('here: none', [['account', row.key]]);
-  return withFields(`here: ${labeled(key)} → ${route == null ? 'no rule' : `R${route.index}`}`, [
-    ['account', row.key], ['rule', route == null ? 'none' : route.index], ['kind', key.kind], ['match', key.match],
-  ]);
+  const rule = routeForDir(row, dir, ctx);
+  const now = routeOfDir(row, dir, ctx);
+  const place = key.kind === 'outside' ? null : placeOfDir(dir, ctx);
+  const pairs = [['now', now.reason.kind === 'pending' ? 'pending' : idList(now.ids)]];
+  if (place != null && place.path != null) pairs.push(['path', place.path]);
+  pairs.push(['account', row.key], ['rule', rule == null ? 'none' : rule.index], ['kind', key.kind], ['match', key.match]);
+  return withFields(`here: ${labeled(key)} → ${rule == null ? 'no rule' : `R${rule.index}`}`, pairs);
+}
+
+// The folder picker's header: how many places it offers.
+export function pickerHeaderLine(row, count) {
+  const places = count === 1 ? '1 repo or folder' : `${count} repos or folders`;
+  return withFields(`${accountLabel(row)}: ${places} with recent sessions`, [['account', row.key]]);
+}
+
+// F<n>: a recent repo or folder with no rule of its own.
+export function pickerLine(n, row, place) {
+  return withFields(`F${n}. ${labeled(place)}, ${sessionsCount(place.sessions)}`, [['account', row.key], ['kind', place.kind], ['match', place.match]]);
 }
 
 export function routesHeaderLine(row, placeCount, sessionCount) {

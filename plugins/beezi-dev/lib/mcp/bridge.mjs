@@ -150,7 +150,8 @@ function handleUnlinked(bridge, msg, ids, authState) {
 async function runStatusTool(bridge, id) {
   try {
     const { buildStatusReport } = await import('../ux/status-report.mjs');
-    const lines = await buildStatusReport({ budgetMs: 8000 });
+    // This process's cwd is the server's spawn folder, never the user's.
+    const lines = await buildStatusReport({ budgetMs: 8000, ownCwd: false });
     writeMessage(bridge, { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: lines.join('\n') }] } });
   } catch {
     writeMessage(bridge, { jsonrpc: '2.0', id, result: { isError: true, content: [{ type: 'text', text: STATUS_FAILED_MESSAGE }] } });

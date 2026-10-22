@@ -60,8 +60,7 @@ export async function runSessionStartHook(input, { budgetMs, write }, deps = {})
   if (joinedPrompt != null) parts.push(joinedPrompt);
   else if (joinedNotice != null) notices.push({ text: joinedNotice.text, kind: 'joined', actionable: true });
   if (workspacePrompt != null) parts.push(workspacePrompt);
-  if (targetsNotice != null && targetsNotice.context != null) notices.push({ text: targetsNotice.context, kind: 'targets', actionable: false });
-  if (targetsNotice != null && targetsNotice.notTracked != null) notices.push({ text: targetsNotice.notTracked, kind: 'not-tracked', actionable: true });
+  if (targetsNotice != null) notices.push({ text: targetsNotice, kind: 'not-tracked', actionable: true });
   if (historyNotice != null) notices.push({ text: historyNotice.text, kind: 'history', actionable: true });
   const line = attended ? relayLine(notices) : null;
   // Marked announced only once this notice is the one relayed, so a higher-priority notice doesn't swallow it.

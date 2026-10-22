@@ -27,16 +27,21 @@ with their choice typed after the command.
 
 Switching is not logging out. If the user only wants analytics to come from another linked account,
 that is /beezi-dev-settings account; to sign in as someone else, /beezi-dev-login adds that account next to
-this one. Ask before running anything unless the user clearly asked to log out, unlink or remove an
-account.
+this one. Step 1 logs the only linked account out at once, so ask before running anything unless the
+user clearly asked to log out, unlink or remove an account.
 
 Step 0 — preflight. Run EXACTLY `node "<plugin-root>/scripts/preflight.mjs" --for logout`. If its
 first line starts with `✗`, show it verbatim and STOP.
 
-Step 1 — run EXACTLY `node "<plugin-root>/scripts/logout.mjs" --list` and show the accounts. None
-linked → say so and stop. One → use it. Several → ask "Which Beezi account should be logged out of this
-machine?" with one choice per account (its name and workspace as the label; the bracketed key is only
-for the command) and a last choice "All accounts".
+Step 1 — run EXACTLY `node "<plugin-root>/scripts/logout.mjs" --single`. With one linked account it
+logs that account out in the same call: its output is the logout result, so relay it as "Relay every
+line" below says and stop. None linked → it says so: stop. Several → it logs nothing out and prints
+`✗ More than one account is linked — pick one.` and then the accounts as a numbered list
+(`<n>. <name> [<key>]`). That `✗` line is not a failure to stop on: show the list and ask "Which
+Beezi account should be logged out of this machine?" with one choice per account (its name and
+workspace as the label; the bracketed key is only for the command) and a last choice "All accounts".
+To show the list again without logging anything out, run
+`node "<plugin-root>/scripts/logout.mjs" --list`.
 
 Step 2 — when the account being removed is the default and others remain, ask "Which remaining account
 should /beezi-dev-analytics read from?" with one choice per remaining account; when only one remains, use
