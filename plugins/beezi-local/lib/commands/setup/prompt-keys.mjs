@@ -162,18 +162,15 @@ export function keyChoose(p, question, options, defaultIndex) {
   });
 }
 
-// New picks after toggling i: a ticked i is removed, an exclusive i stands alone, any other i clears the exclusive ones.
-export function togglePick(picked, i, exclusive) {
-  if (picked.indexOf(i) !== -1) return picked.filter((j) => j !== i);
-  if (exclusive.indexOf(i) !== -1) return [i];
-  return picked.filter((j) => exclusive.indexOf(j) === -1).concat([i]);
-}
-
-export function keyChooseMany(p, question, options, exclusive) {
+export function keyChooseMany(p, question, options) {
   let cursor = 0;
   let run = '';
-  let runStart = [];
-  let picked = [];
+  const picked = [];
+  const toggle = (i) => {
+    const at = picked.indexOf(i);
+    if (at === -1) picked.push(i);
+    else picked.splice(at, 1);
+  };
   return keyQuestion(p, question, () => menuRows(p, question, options, cursor, picked, HINT_MANY), (str, key, finish) => {
     if (isSubmit(key)) {
       const chosen = picked.slice().sort((a, b) => a - b);
@@ -186,16 +183,17 @@ export function keyChooseMany(p, question, options, exclusive) {
       return false;
     }
     if (isDigit(str)) {
+      const previous = run === '' ? -1 : Number(run) - 1;
       run = nextRun(run, str, options.length);
       if (run === '') return false;
-      // A run's first digit snapshots the ticks; a longer run re-applies its toggle to that snapshot.
-      if (run.length === 1) runStart = picked;
-      picked = togglePick(runStart, Number(run) - 1, exclusive);
+      // A longer run undoes the toggle its shorter prefix applied.
+      if (run.length > 1) toggle(previous);
+      toggle(Number(run) - 1);
       return true;
     }
     run = '';
     if (key.name === 'space') {
-      picked = togglePick(picked, cursor, exclusive);
+      toggle(cursor);
       return true;
     }
     const next = step(str, key, cursor, options.length);

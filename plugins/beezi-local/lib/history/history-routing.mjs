@@ -3,7 +3,7 @@ import { loadLedger, isImported } from '../state/ledger.mjs';
 import { isMultiTenant, isSingleTenant, tenantsOf } from '../workspace/tenants.mjs';
 import { rulesOf, usesRules } from '../workspace/rule-model.mjs';
 import { createRouteContext, routeKeyForDir } from '../workspace/route-key.mjs';
-import { routeForDir } from '../workspace/routing.mjs';
+import { placeNow, routeForDir } from '../workspace/routing.mjs';
 import { readSessionWorkspace } from '../workspace/session-routes.mjs';
 import { newFoldersOf, resolveTargets } from '../workspace/targets.mjs';
 import { ACTIVE_SESSION_WINDOW_MS } from './scan-limits.mjs';
@@ -69,7 +69,7 @@ export function planSessionRoutes(row, entries, ctx, { readState = readSessionWo
   return routes;
 }
 
-// The one "waiting" test, shared by `routes` and the backfill seal hold so a pull is held only for what `routes` asks about: New folders is Ask me, settled, readable, pending, and in no workspace's ledger.
+// The one "waiting" test, shared by `routes` and the run's deferred count so a session counts as waiting only for what `routes` asks about: New folders is Ask me, settled, readable, pending, and in no workspace's ledger.
 // Map<sessionId, key> plus `noDirectory` (waiting with no recorded directory); `routes` option reuses planSessionRoutes results.
 export function waitingRoutes(row, entries, ctx, {
   liveSessionId = null,
@@ -177,21 +177,6 @@ export function planReviewPlaces(row, entries, ctx, {
   places.sort((a, b) => b.sessions - a.sessions || (a.label < b.label ? -1 : (a.label > b.label ? 1 : 0)));
   for (const rule of rulesOf(row)) add(rule, 0);
   return places;
-}
-
-// Where a place sends today: its rule (unless every workspace it names was left), else New folders, else under Ask me the one workspace the account had before the new ones, else pending.
-export function placeNow(row, place, newIds) {
-  const members = (tenantsOf(row) || []).map((t) => t.id);
-  for (const rule of rulesOf(row)) {
-    if (rule.kind !== place.kind || rule.match !== place.match) continue;
-    const ids = rule.tenantIds.filter((id) => members.indexOf(id) !== -1);
-    if (rule.tenantIds.length === 0 || ids.length > 0) return { ids, pending: false };
-  }
-  const newFolders = newFoldersOf(row);
-  if (newFolders.mode === 'send') return { ids: newFolders.tenantIds, pending: false };
-  if (newFolders.mode === 'none') return { ids: [], pending: false };
-  const before = members.filter((id) => newIds.indexOf(id) === -1);
-  return before.length === 1 ? { ids: before, pending: false } : { ids: [], pending: true };
 }
 
 // Under Ask me, the rules that keep rule-less places (a rule naming only left workspaces counts as none) sending where they send now; pending places get none.

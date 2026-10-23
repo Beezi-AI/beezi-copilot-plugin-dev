@@ -7,8 +7,7 @@ const LEDGER_VERSION = 1;
 
 const DELIVERED_OUTCOMES = [BackfillSessionStatus.ACCEPTED, BackfillSessionStatus.PARTIAL];
 
-// Which past sessions the history backfill (the last step of /beezi-local-login) has already handed
-// to the server, and what the server said.
+// Which past sessions a history upload has already handed to the server, and what the server said.
 //
 // This has to be durable in a way ~/.beezi-copilot/state/<id>.json is not: pruneStale() deletes anything
 // in state/, telemetry/ and the account queues older than 14 days, so a marker there expires and
@@ -19,8 +18,7 @@ const DELIVERED_OUTCOMES = [BackfillSessionStatus.ACCEPTED, BackfillSessionStatu
 // The ledger is per account and the server's pull record is per (tenant, user, tool), so it also
 // binds to the login and the API base that wrote it: a ledger recorded under another identity or
 // another server is discarded, or a logout→login into a different workspace (or a BEEZI_API_URL
-// override pointed at staging) would replay it, find zero candidates, and seal the new pull EMPTY
-// (there is no reopen).
+// override pointed at staging) would replay it, find zero candidates, and send the new pull nothing.
 export function loadLedger(key, identity = null, tenantId = null) {
   const raw = readJson(auditLedgerFile(key, tenantId), null);
   // A ledger from a future/foreign shape is discarded rather than merged: re-sending is
@@ -54,7 +52,7 @@ function emptyLedger(identity) {
   };
 }
 
-// The pull was sealed server-side (we finalized it, or a chunk answered ALREADY_COMPLETED).
+// The pull was sealed server-side: a chunk answered ALREADY_COMPLETED.
 export function markComplete(ledger, { at = new Date() } = {}) {
   ledger.complete = true;
   ledger.updatedAt = at.toISOString();
@@ -85,26 +83,8 @@ export function ledgerDelivered(ledger, sessionId) {
 
 export function markImported(ledger, sessionId, { outcome, reports = 0, at = new Date() } = {}) {
   ledger.sessions[sessionId] = { at: at.toISOString(), outcome, reports };
-  // A session that read fine this time is not unreadable any more; leaving the marker would make
-  // wasUnreadable() answer yes forever for a session that has since imported.
-  if (ledger.unreadable != null) delete ledger.unreadable[sessionId];
   ledger.updatedAt = at.toISOString();
   return ledger;
-}
-
-// A transcript that could not be read. Deliberately NOT in `sessions`: the session stays eligible,
-// so the next run parses it again. It only records that we already gave it one chance, which is
-// what lets the pull seal on the second attempt instead of blocking forever on a file that fails
-// deterministically (a permission error reads exactly like a transient one).
-export function markUnreadable(ledger, sessionId, { at = new Date() } = {}) {
-  ledger.unreadable[sessionId] = { at: at.toISOString() };
-  ledger.updatedAt = at.toISOString();
-  return ledger;
-}
-
-export function wasUnreadable(ledger, sessionId) {
-  const unreadable = ledger == null ? undefined : ledger.unreadable;
-  return Object.prototype.hasOwnProperty.call(unreadable == null ? {} : unreadable, sessionId);
 }
 
 // 0600 — the ledger records which projects the user worked on, by session id only, but the file

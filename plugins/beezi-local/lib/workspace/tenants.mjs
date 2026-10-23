@@ -40,6 +40,13 @@ export function isMultiTenant(row) {
   return tenants != null && tenants.length > 1;
 }
 
+// Every workspace of a multi-workspace row; otherwise its one workspace, or the row's own tenantId, or none.
+export function offerableTenantIds(row) {
+  const tenants = tenantsOf(accountRowFor(row));
+  if (tenants != null && tenants.length > 0) return tenants.length > 1 ? tenants.map((t) => t.id) : [tenants[0].id];
+  return row != null && typeof row.tenantId === 'string' && row.tenantId !== '' ? [row.tenantId] : [];
+}
+
 export function isSingleTenant(row) {
   const tenants = tenantsOf(accountRowFor(row));
   return tenants != null && tenants.length === 1;

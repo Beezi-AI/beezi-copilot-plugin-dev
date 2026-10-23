@@ -120,7 +120,7 @@ export function filterCandidates(entries, facts) {
       const route = sessionRoutes.get(id);
       if (route == null || route.tenantIds.indexOf(tenantId) === -1) {
         counts.routedElsewhere += 1;
-        // Holds the seal only for a waiting session this run would take if a rule sent it here (post-link ones are tracked live).
+        // Counts as deferred only a waiting session this run would take if a rule sent it here (post-link ones are tracked live).
         if (route != null && route.waiting === true && !(linkCutoffMs != null && entry.mtimeMs >= linkCutoffMs)) counts.routeDeferred += 1;
         continue;
       }

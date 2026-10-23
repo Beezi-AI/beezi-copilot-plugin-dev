@@ -38,8 +38,6 @@ export function newResult() {
     noRemote: 0,
     emitFailed: 0,
     unreadable: 0,
-    // Unreadable sessions this run holds the pull open for: the ones not already tried once.
-    retriableUnreadable: 0,
     noUsageSummary: 0,
     // Sessions left for a later run; the four named causes are part of `deferred`, `deferredOther` is the rest (busy, budget).
     deferred: 0,
@@ -53,7 +51,6 @@ export function newResult() {
     coverageKnown: false,
     followupsAllowed: true,
     upgradeAdvised: false,
-    finalized: false,
     lastError: null,
     // Ids with a final answer for now (accepted, partial, rejected, empty, noRemote, oversize); deferred, failed and unreadable are excluded.
     settledIds: [],
@@ -88,10 +85,10 @@ export function addFlushCounters(result, flushed) {
   if (flushed.lastError) result.lastError = flushed.lastError;
 }
 
-const skip = (counters, settled = false) => ({ counters, settled, unreadable: false, upload: null });
-const UNREADABLE = Object.freeze({ counters: ['unreadable'], settled: false, unreadable: true, upload: null });
+const skip = (counters, settled = false) => ({ counters, settled, upload: null });
+const UNREADABLE = Object.freeze({ counters: ['unreadable'], settled: false, upload: null });
 
-// → { counters, settled, unreadable, upload: null | { parentMaxLine } } for one engine answer; readPriorMode() is asked
+// → { counters, settled, upload: null | { parentMaxLine } } for one engine answer; readPriorMode() is asked
 // only when a shutdown-totals replay starts past line 0.
 export function classifyReplay(checkpoint, reports, startCursor, readPriorMode) {
   const skipped = checkpoint == null || checkpoint.skipped == null ? {} : checkpoint.skipped;
@@ -121,19 +118,19 @@ export function classifyReplay(checkpoint, reports, startCursor, readPriorMode) 
   }
   // No session.shutdown in the window: the activity, code changes and timeline are real, so it still uploads without tokens.
   const counters = allTotals && tokens === 0 && credits === 0 ? ['noUsageSummary'] : [];
-  return { counters, settled: false, unreadable: false, upload: { parentMaxLine } };
+  return { counters, settled: false, upload: { parentMaxLine } };
 }
 
 function classifyUncommitted(checkpoint, skipped) {
   const reason = checkpoint == null ? null : checkpoint.reason;
   // runCheckpoint never throws, so an engine crash ('internal') or a file that vanished ('no-transcript') arrives as a failed outcome:
-  // the first one holds the seal like any unreadable session, the second lets it through.
+  // it counts as unreadable like any other.
   if (checkpoint == null || skipped.deltaFailed || reason === 'internal' || reason === 'no-transcript') return UNREADABLE;
   if (reason === 'no-activity') return skip(['noActivity'], true);
   // The file is shorter than the start line: its stored prefix cannot be trusted against this file.
   if (reason === 'cursor-mismatch' || skipped.cursorMismatch) return skip(['deferred', 'deferredGap']);
   if (reason === 'usage-hold' || skipped.usageHeld) return skip(['deferred', 'deferredUsageMode']);
-  // Busy session, spent budget, no recipients: retried by a later run and holds the seal meanwhile.
+  // Busy session, spent budget, no recipients: retried by a later run.
   if (checkpoint.outcome === 'deferred') return skip(['deferred', 'deferredOther']);
   // A parent with no usable working directory is reported under the engine's fallback remote, so a failed emit is a real one.
   return skip(['emitFailed']);

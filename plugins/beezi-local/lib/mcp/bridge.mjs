@@ -1,5 +1,6 @@
 import { getAccessToken as _getAccessToken, getAuthentication as _getAuthentication } from '../auth/token.mjs';
 import { pinnedTo } from '../auth/recipients.mjs';
+import { anonymizationScope } from '../core/anon-target.mjs';
 import { AUTH_STATES } from '../contract/auth-states.mjs';
 import { isOriginMismatch } from '../platform/http.mjs';
 import { getDefaultKey as _getDefaultKey, getAccount as _getAccount } from '../accounts/index-store.mjs';
@@ -177,7 +178,7 @@ async function authenticate(bridge, msg, ids, { account, row, scope }) {
     .then(() => bridge.getAuthentication({}, { account }))
     .catch(() => ({ authState: AUTH_STATES.UNAVAILABLE, accessToken: null }));
   if (auth.authState === AUTH_STATES.READY) {
-    return pinnedTo({ key: account, token: auth.accessToken, clientId: auth.clientId || (row && row.clientId), tenantId: scope.tenantId }, auth);
+    return pinnedTo({ key: account, token: auth.accessToken, clientId: auth.clientId || (row && row.clientId), tenantId: scope.tenantId, ...anonymizationScope(row) }, auth);
   }
   // The bridge cannot start with real tools. Recorded with the reason the accessor gave, and
   // delivered without a token — this is exactly the failure a token could not report. Unlinked is a normal state.

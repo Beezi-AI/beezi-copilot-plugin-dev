@@ -1,4 +1,6 @@
-// Pure helpers for the per-account pending-history marker and its notice results; no I/O.
+// Pure helpers for the per-account past-session offer state, the consented pending-history marker and its notice results; no I/O.
+import { isTenantDark, TrackingMode } from '../state/tracking.mjs';
+import { ANON_KINDS } from '../core/anon-target.mjs';
 
 export const HISTORY_RETRY_MS = 60 * 60 * 1000;
 export const HISTORY_GIVE_UP_MS = 7 * 24 * 60 * 60 * 1000;
@@ -18,15 +20,22 @@ export const RunOutcome = Object.freeze({
 
 export const SettleState = Object.freeze({ CLEARED: 'cleared', KEPT: 'kept', GAVE_UP: 'gave-up', MISSING: 'missing' });
 
+export const OfferAction = Object.freeze({ SKIP: 'skip', SCAN: 'scan' });
+
+export const OfferState = Object.freeze({ DECLINED: 'declined', SETTLED: 'settled', ACCEPTED: 'accepted' });
+
+const UPLOAD_MODES = ['sync', 'backfill'];
+
 function memberIds(row) {
   return Array.isArray(row.tenants)
     ? row.tenants.filter((t) => t != null && typeof t.id === 'string').map((t) => t.id)
     : [];
 }
 
+// Only entries written after a yes; an entry without consentedAt (written by older builds on a rule write) is ignored.
 function entriesOf(row) {
   return Array.isArray(row.pendingHistory)
-    ? row.pendingHistory.filter((e) => e != null && typeof e.tenantId === 'string')
+    ? row.pendingHistory.filter((e) => e != null && typeof e.tenantId === 'string' && typeof e.consentedAt === 'string')
     : [];
 }
 
@@ -43,22 +52,10 @@ export function newFoldersSendIds(row) {
 }
 
 // Every workspace a written rule sends to (members only, in member order); a one-workspace account sends unless the rule is [].
-// Requesting ids the place already sent to is harmless: the worker uploads only sessions a workspace lacks.
 export function ruleRequestIds(row, tenantIds) {
   const members = memberIds(row);
   if (members.length === 1) return tenantIds.length === 0 ? [] : members;
   return members.filter((id) => tenantIds.indexOf(id) !== -1);
-}
-
-// After a rule is removed its places fall through to some remaining rule or New folders "send", so this requests
-// every member those still reach (a one-workspace account: its workspace); over-requesting is harmless, as above.
-export function removalRequestIds(row) {
-  const members = memberIds(row);
-  if (members.length === 1) return members;
-  const rules = Array.isArray(row.workspaceRules) ? row.workspaceRules : [];
-  const reached = newFoldersSendIds(row);
-  for (const r of rules) if (r != null && Array.isArray(r.tenantIds)) reached.push(...r.tenantIds);
-  return members.filter((id) => reached.indexOf(id) !== -1);
 }
 
 // Ids in `after` that `before` lacks, once each, in `after` order.
@@ -66,26 +63,118 @@ export function gainedIds(before, after) {
   return after.filter((id, i) => before.indexOf(id) === -1 && after.indexOf(id) === i);
 }
 
-// Adds an entry per gained workspace, or refreshes one (due now, counts kept); drops workspaces the account left.
-export function requestHistory(row, tenantIds, nowIso) {
-  const members = memberIds(row);
-  const entries = entriesOf(row).filter((e) => members.indexOf(e.tenantId) !== -1);
+function offerOf(row, tenantId) {
+  const offers = row.historyOffers;
+  const stamp = offers != null && typeof offers === 'object' ? offers[tenantId] : null;
+  return stamp != null && typeof stamp === 'object' ? stamp : null;
+}
+
+function placesOf(stamp) {
+  return stamp != null && Array.isArray(stamp.places) ? stamp.places : [];
+}
+
+function writeOffer(row, tenantId, { state, changedAt, nowIso, places }) {
+  const offers = row.historyOffers != null && typeof row.historyOffers === 'object' ? row.historyOffers : {};
+  offers[tenantId] = { state, at: nowIso, changedAt, places };
+  row.historyOffers = offers;
+}
+
+const SKIP_OFFER = Object.freeze({ action: OfferAction.SKIP, places: null });
+
+// True when the workspace's current changedAt is set and later than the stored one (a missing stored one is older).
+export function changedSince(current, stored) {
+  return current != null && (stored == null || Date.parse(current) > Date.parse(stored));
+}
+
+// A list of known kind keys as stored, else every kind (fail closed).
+export function hiddenKindsOf(value) {
+  const valid = Array.isArray(value) && value.every((k) => ANON_KINDS.indexOf(k) !== -1);
+  return (valid ? value : ANON_KINDS).slice();
+}
+
+// K6 order: the choice, tracking, a consented upload, then the stamp; a later changedAt rescans all, re-opened places rescan those.
+export function offerAction(row, tenantId, { pastSessions, trackingDisabled }) {
+  if (pastSessions.choice !== 'offer' || trackingDisabled) return SKIP_OFFER;
+  if (pendingHistoryOf(row).some((e) => e.tenantId === tenantId)) return SKIP_OFFER;
+  const stamp = offerOf(row, tenantId);
+  const newer = changedSince(pastSessions.changedAt, stamp == null ? null : stamp.changedAt);
+  if (stamp == null || newer) return { action: OfferAction.SCAN, places: null };
+  const places = placesOf(stamp);
+  return places.length > 0 ? { action: OfferAction.SCAN, places } : SKIP_OFFER;
+}
+
+export function stampOffer(row, tenantId, { state, changedAt, nowIso }) {
+  writeOffer(row, tenantId, { state, changedAt, nowIso, places: [] });
+}
+
+export function clearOfferPlaces(row, tenantId) {
+  const stamp = offerOf(row, tenantId);
+  if (stamp != null) stamp.places = [];
+}
+
+// Adds the place to each stamped workspace's re-opened places once; a workspace never stamped is offered in full anyway.
+export function reopenPlace(row, tenantIds, place) {
   for (const id of tenantIds) {
-    if (members.indexOf(id) === -1) continue;
-    const found = entries.find((e) => e.tenantId === id);
-    if (found != null) {
-      found.requestedAt = nowIso;
-      found.lastAttemptAt = null;
-      continue;
-    }
-    entries.push({ tenantId: id, requestedAt: nowIso, attempts: 0, lastAttemptAt: null, inFlight: false, sent: 0, skipped: 0, retryNoticed: false });
+    const stamp = offerOf(row, id);
+    if (stamp == null) continue;
+    const places = placesOf(stamp);
+    if (!places.some((p) => p != null && p.kind === place.kind && p.match === place.match)) places.push(place);
+    stamp.places = places;
   }
-  if (entries.length > 0 || Array.isArray(row.pendingHistory)) row.pendingHistory = entries;
-  return entries;
+}
+
+// The one tracking test for the offer: a multi-workspace row by its dark workspaces, else the account mode; no state allows.
+export function offerTrackingDisabled(row, tenantId, tracking) {
+  if (memberIds(row).length > 1) return isTenantDark(tracking, tenantId);
+  return tracking != null && tracking.trackingMode === TrackingMode.DISABLED;
+}
+
+// The exact upload a yes consented to, { sessionIds, mode, unrouted, hiddenKinds, scannedAt }; null when the entry carries none or a malformed one.
+export function acceptedOf(entry) {
+  const accepted = entry == null ? null : entry.accepted;
+  if (accepted == null || typeof accepted !== 'object' || UPLOAD_MODES.indexOf(accepted.mode) === -1) return null;
+  const ids = accepted.sessionIds;
+  if (!Array.isArray(ids) || !ids.every((id) => typeof id === 'string' && id !== '')) return null;
+  return acceptedShape(accepted);
+}
+
+// The stored shape of an accepted upload: unknown kinds hide all five and a missing scannedAt reads as null.
+function acceptedShape(accepted) {
+  return {
+    sessionIds: accepted.sessionIds.slice(),
+    mode: accepted.mode,
+    unrouted: accepted.unrouted === true,
+    hiddenKinds: hiddenKindsOf(accepted.hiddenKinds),
+    scannedAt: typeof accepted.scannedAt === 'string' ? accepted.scannedAt : null,
+  };
+}
+
+// A yes: one due entry for the workspace carrying the exact sessions shown (a repeated yes replaces them and makes it due
+// again, counts kept), and the accepted stamp.
+export function consentHistory(row, tenantId, { changedAt, nowIso, accepted }) {
+  const entries = entriesOf(row);
+  const found = entries.find((e) => e.tenantId === tenantId);
+  const due = {
+    consentedAt: nowIso,
+    changedAt,
+    requestedAt: nowIso,
+    lastAttemptAt: null,
+    accepted: acceptedShape(accepted),
+  };
+  if (found != null) Object.assign(found, due);
+  else entries.push({ tenantId, ...due, attempts: 0, inFlight: false, sent: 0, skipped: 0, retryNoticed: false });
+  row.pendingHistory = entries;
+  stampOffer(row, tenantId, { state: OfferState.ACCEPTED, changedAt, nowIso });
+}
+
+// The workspaces an entry can be owed for: the tenants list, else a single-workspace row's own tenantId.
+function owedTenantIds(row) {
+  const members = memberIds(row);
+  return members.length > 0 || typeof row.tenantId !== 'string' || row.tenantId === '' ? members : [row.tenantId];
 }
 
 export function pendingHistoryOf(row) {
-  const members = memberIds(row);
+  const members = owedTenantIds(row);
   return entriesOf(row).filter((e) => members.indexOf(e.tenantId) !== -1);
 }
 
@@ -140,6 +229,10 @@ export function settleHistory(row, tenantId, run, { plannedAtMs, nowMs }) {
   let state = SettleState.KEPT;
   if (run.outcome === RunOutcome.CLEAN && coveredByRun) {
     if (entry.sent > 0 || entry.skipped > 0) addResult(row, tenantId, HistoryStatus.SENT, entry.sent, entry.skipped);
+    // Places re-opened while the upload ran stay open.
+    writeOffer(row, tenantId, {
+      state: OfferState.SETTLED, changedAt: entry.changedAt, nowIso: new Date(nowMs).toISOString(), places: placesOf(offerOf(row, tenantId)),
+    });
     state = SettleState.CLEARED;
   } else if (run.outcome === RunOutcome.REFUSED || !Number.isFinite(requestedMs) || nowMs - requestedMs >= HISTORY_GIVE_UP_MS) {
     // A week spent only waiting on open sessions (or a busy lock) is not a failure: report what was sent.

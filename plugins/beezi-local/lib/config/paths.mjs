@@ -155,7 +155,7 @@ export function repoMapFile() {
   return path.join(beeziHome(), 'repo-map.json');
 }
 
-// Durable "already imported" ledger for /beezi-local-sync and the login import. Deliberately at the account dir ROOT and
+// Durable "already imported" ledger for /beezi-local-sync and the accepted past-sessions upload. Deliberately at the account dir ROOT and
 // not under state/ or queue/: pruneStale() deletes 14-day-old files in both of those, so a marker
 // living there would expire and make every old session look importable again on the next run.
 export function auditLedgerFile(key, tenantId = null) {
@@ -172,6 +172,11 @@ export function tenantTag(tenantId) {
 // re-enable tracking for dark-mode tenants.
 export function trackingStateFile(key) {
   return path.join(accountDir(key), 'tracking.json');
+}
+
+// The last past-sessions offer scan per workspace: { version, scans: { [tenantId]: record } }. At the account dir root for the same pruneStale() reason.
+export function historyOfferFile(key) {
+  return path.join(accountDir(key), 'history-offer.json');
 }
 
 // The one-shot "the store was migrated, restart Copilot" flag: { upgradeNotice }. Machine-

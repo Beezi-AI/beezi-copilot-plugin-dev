@@ -1,5 +1,4 @@
 import crypto from 'crypto';
-import os from 'os';
 import { apiOrigin, OAUTH_SCOPES, PROTECTED_RESOURCE_PATH } from '../config/api.mjs';
 import { UserError } from '../core/errors.mjs';
 import { resolveFetch } from '../platform/compat-fetch.mjs';
@@ -140,12 +139,11 @@ export async function discover(deps = {}) {
 // Dynamic client registration (RFC 7591): one public client per machine.
 export async function registerClient(registrationEndpoint, redirectUri, deps = {}) {
   const fetchImpl = deps.fetchImpl == null ? resolveFetch() : deps.fetchImpl;
-  const hostname = deps.hostname == null ? os.hostname() : deps.hostname;
   const res = await fetchWithTimeout(fetchImpl, registrationEndpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      client_name: `Beezi Copilot plugin — ${hostname}`,
+      client_name: 'Beezi Copilot plugin',
       redirect_uris: [redirectUri],
       token_endpoint_auth_method: 'none',
       grant_types: ['authorization_code', 'refresh_token'],

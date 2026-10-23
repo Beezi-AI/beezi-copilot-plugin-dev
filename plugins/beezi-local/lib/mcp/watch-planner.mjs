@@ -132,6 +132,14 @@ export function settledByAll(entries, requiredKeys, isSettledFor) {
   return entries.filter((entry) => requiredKeys.every((key) => isSettledFor(key, entry)));
 }
 
+// Drops a recipient whose link cutoff is unknown or later than the session's last write.
+export function postLinkRecipients(entry, recipients, cutoffs) {
+  return recipients.filter((r) => {
+    const cutoff = cutoffs.get(settlementKey(r.key, r.tenantId));
+    return cutoff != null && entry.mtimeMs >= cutoff;
+  });
+}
+
 // For an established start, one audit run per lagging recipient, replaying the lines between its own prefix and
 // the start into its own queue only (no state, no flush). start: establishStart's answer. → [{ recipient, options }]
 export function laggingReplays(start, recipients) {

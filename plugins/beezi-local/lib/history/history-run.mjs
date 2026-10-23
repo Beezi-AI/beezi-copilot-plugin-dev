@@ -13,13 +13,8 @@ import { buildTimeline } from '../capture/timeline.mjs';
 import { readTimelineMarkers } from '../state/timeline-markers.mjs';
 import { acquireLease } from '../platform/lease.mjs';
 import { yieldToLoop } from '../core/async.mjs';
-import {
-  loadLedger as _loadLedger,
-  saveLedger as _saveLedger,
-  markUnreadable,
-  wasUnreadable,
-} from '../state/ledger.mjs';
-import { flushBackfillChunks as _flushBackfillChunks, completeBackfill as _completeBackfill } from './backfill-transport.mjs';
+import { loadLedger as _loadLedger, saveLedger as _saveLedger } from '../state/ledger.mjs';
+import { flushBackfillChunks as _flushBackfillChunks } from './backfill-transport.mjs';
 import { fetchCoverage as _fetchCoverage } from '../delivery/coverage.mjs';
 import { loadCoverageCheckpoints as _loadCoverageCheckpoints, saveCoverageCheckpoints as _saveCoverageCheckpoints } from '../state/coverage-record.mjs';
 import { currentBinding, checkpointUsageSourceFor } from '../state/coverage-record.mjs';
@@ -32,26 +27,27 @@ import { usesRules } from '../workspace/rule-model.mjs';
 import { resolveFetch } from '../platform/compat-fetch.mjs';
 import { whoami as _whoami } from '../auth/whoami.mjs';
 import { readTrackingState, isLiveTrackingAllowed, isTenantDark, markBackfillCompleted, recordWhoami } from '../state/tracking.mjs';
-import { AUDIT_TIMEOUT_MS, BackfillHalt, SYNC_MODE } from '../contract/history.mjs';
+import { SYNC_MODE } from '../contract/history.mjs';
 import { newResult, countOf, addCounters, classifyReplay, isCleanSync } from './run-result.mjs';
-import { shouldFinalize } from './seal-policy.mjs';
 import { runPreamble } from './preamble.mjs';
 import { attemptHead, cwdReader, proveStartLines, selectCandidates, usableEntries, withVscodeEntries } from './candidates.mjs';
 import { registerAccount } from './registration.mjs';
 import { stampHistoryReports } from './identity-apply.mjs';
 import { readSessionFacts } from './session-facts.mjs';
-import { createBatchQueue, loseLease, progress, renewLease, sealLocally } from './batch-dispatch.mjs';
+import { createBatchQueue, loseLease, progress, renewLease } from './batch-dispatch.mjs';
 import { createRenewal } from './token-renewal.mjs';
 import { createRunCache } from './run-cache.mjs';
+import { anonymizationFor, kindsOf, reportForWire } from '../core/anon-target.mjs';
 
 export const HISTORY_LEASE_MS = 10 * 60 * 1000;
 
 const LEASE_RENEW_EVERY_MS = 60000;
 
-// One headerless run for a single-workspace row, else one run per workspace a session route reaches; onlySessionIds narrows the sessions planned, markWaiting flags the Ask-me routes that hold the seal.
-export function planHistoryRuns(row, { markWaiting = false, onlySessionIds = null } = {}) {
+// One headerless run for a single-workspace row, else one run per workspace a session route reaches; onlySessionIds narrows the sessions planned, markWaiting flags the Ask-me routes still waiting for a rule.
+// listed: a session listing the caller already made (CLI and VS Code entries), so nothing is listed again.
+export function planHistoryRuns(row, { markWaiting = false, onlySessionIds = null, listed = null } = {}) {
   const only = onlySessionIds == null ? null : new Set(onlySessionIds);
-  const entries = usableEntries(withVscodeEntries(_listSessionFiles()), only);
+  const entries = usableEntries(listed == null ? withVscodeEntries(_listSessionFiles()) : listed, only);
   const readCwd = cwdReader(entries);
   const counts = { rule: 0, 'new-folders': 0, none: 0, pending: 0 };
   if (!isMultiTenant(row)) {
@@ -79,7 +75,7 @@ export function planHistoryRuns(row, { markWaiting = false, onlySessionIds = nul
   return { scanned: entries.length, counts, runs: tenantIds.map((tenantId) => ({ tenantId, sessionRoutes: routes })) };
 }
 
-// Backfill uploads every past session then seals the one-time pull; sync replays only what coverage says is missing and never seals, though a clean one marks the workspace's history settled.
+// Backfill (Audit workspaces) and sync both upload only the sessions they are given; neither seals the pull.
 export async function runAudit(deps = {}, options = {}) {
   // One leased lock for backfill, sync and the watcher's history pass, renewed as the run proceeds.
   const lease = acquireLease('history', { leaseMs: HISTORY_LEASE_MS });
@@ -109,7 +105,6 @@ function resolveIo(deps) {
     listSessionFiles: pick(deps.listSessionFiles, _listSessionFiles),
     runCheckpoint: pick(deps.runCheckpointImpl, _runCheckpoint),
     flushBackfillChunks: pick(deps.flushBackfillChunksImpl, _flushBackfillChunks),
-    completeBackfill: pick(deps.completeBackfillImpl, _completeBackfill),
     loadLedger: pick(deps.loadLedgerImpl, _loadLedger),
     saveLedger: pick(deps.saveLedgerImpl, _saveLedger),
     fetchCoverage: pick(deps.fetchCoverageImpl, _fetchCoverage),
@@ -130,11 +125,12 @@ function resolveIo(deps) {
   };
 }
 
-// preamble → candidates → coverage → registration → replay loop → finalize.
+// preamble → candidates → coverage → registration → replay loop → settle the sync ledger.
 async function runAuditLeased(lease, deps, options) {
   const run = { lease, deps, options, io: resolveIo(deps), result: newResult(), syncMode: options.mode === SYNC_MODE, dryRun: options.dryRun === true };
   const { result } = run;
   if (!(await runPreamble(run))) return result;
+  if (!resolveAnonymization(run)) return result;
   run.renewSession = createRenewal(run);
   // One per run, shared by every flush: the first proxy refusal of gzip turns it off for the rest of the run.
   run.compression = { enabled: true };
@@ -151,8 +147,6 @@ async function runAuditLeased(lease, deps, options) {
   if (candidates.length === 0) {
     result.ok = true;
     settleSyncLedger(run);
-    // A previous run delivered everything but its finalize POST was lost: retry the seal here, or the pull stays open forever.
-    await finalize(run);
     return result;
   }
   if (!(await registerAccount(run))) return result;
@@ -163,11 +157,18 @@ async function runAuditLeased(lease, deps, options) {
   await replayCandidates(run, candidates, proven.startCursors);
 
   result.ok = true;
-  // A run whose lease was taken away reports what it delivered and stops; it must not seal.
-  if (result.halt === BackfillHalt.LOCK_LOST) return result;
   settleSyncLedger(run);
-  await finalize(run);
   return result;
+}
+
+// Sets run.anonKinds (the workspace's kinds now, plus any shown at the question) and run.anonKey; false when a kind is on but no key reached this machine.
+function resolveAnonymization(run) {
+  const block = anonymizationFor(run.session, run.tenantId);
+  run.anonKinds = kindsOf(block);
+  run.anonKey = block == null ? null : block.key;
+  if (run.anonKinds.length === 0 || run.anonKey != null) return true;
+  run.result.reason = 'anonymization-key-missing';
+  return false;
 }
 
 // A clean sync covered this workspace's history, so the watcher may keep it current from now on.
@@ -179,23 +180,6 @@ function settleSyncLedger(run) {
   try { run.io.saveLedger(run.key, run.ledger, run.ledgerTenant); } catch { /* best-effort */ }
 }
 
-async function finalize(run) {
-  const { result } = run;
-  if (!shouldFinalize(result, run.options)) return;
-  // Ownership is re-checked immediately before the one irreversible act in this file.
-  if (!run.lease.verify().ok) {
-    result.lastError = 'the history lease was taken over — the pull was not sealed';
-    return;
-  }
-  const sealed = await run.io.completeBackfill(run.session, { fetchImpl: run.io.fetchImpl }, { timeoutMs: AUDIT_TIMEOUT_MS });
-  if (sealed.completed || sealed.code === 'BACKFILL_ALREADY_COMPLETED') {
-    result.finalized = true;
-    sealLocally(run);
-  } else {
-    result.lastError = sealed.reason == null ? result.lastError : sealed.reason;
-  }
-}
-
 // Parsing stays strictly sequential: one transcript in memory at a time.
 async function replayCandidates(run, candidates, startCursors) {
   run.total = candidates.length;
@@ -204,7 +188,6 @@ async function replayCandidates(run, candidates, startCursors) {
   run.lastRenewAt = run.io.now();
   // sessionId → what the follow-up phase needs once the server confirms the session landed.
   run.followups = new Map();
-  run.unreadableDirty = false;
   const queue = createBatchQueue(run);
   try {
     for (const entry of candidates) {
@@ -224,19 +207,7 @@ async function replayCandidates(run, candidates, startCursors) {
     await queue.settle();
   }
   await queue.drain();
-
-  // A run can hit unreadable sessions and dispatch nothing at all, so these cannot ride on the per-dispatch save; a dry run writes nothing.
-  if (run.unreadableDirty && !run.dryRun) {
-    try { run.io.saveLedger(run.key, run.ledger, run.ledgerTenant); } catch { /* best-effort */ }
-  }
   if (run.coverageDirty) run.io.saveCoverage(run.key, run.coverageRecord);
-}
-
-// The first failure earns a retry and holds the pull open; a second one does not, so a permanently unreadable file cannot block the seal forever.
-function noteUnreadable(run, sessionId) {
-  if (!wasUnreadable(run.ledger, sessionId)) run.result.retriableUnreadable += 1;
-  markUnreadable(run.ledger, sessionId);
-  run.unreadableDirty = true;
 }
 
 // One candidate through its engine → the group to upload, or null when it settled, deferred or failed.
@@ -250,7 +221,6 @@ async function replayOne(run, entry, startCursor) {
   } catch {
     // One unreadable session must not end the run, but it is not silent either.
     result.unreadable += 1;
-    noteUnreadable(run, id);
     run.processed += 1;
     return null;
   }
@@ -262,7 +232,6 @@ async function replayOne(run, entry, startCursor) {
   };
   const verdict = classifyReplay(checkpoint, reports, startCursor, readPriorMode);
   addCounters(result, verdict.counters);
-  if (verdict.unreadable) noteUnreadable(run, id);
   if (verdict.settled) result.settledIds.push(id);
   if (verdict.upload == null) return null;
 
@@ -271,8 +240,15 @@ async function replayOne(run, entry, startCursor) {
   await stampHistoryReports(reports, entry, run.billingSnapshot, facts);
   const timeline = buildSessionTimeline(run, entry, facts);
   const usageSource = reports.map((r) => r.usage_source).find((s) => s === 'per_call' || s === 'session_totals');
+  const sent = reports.map((r) => reportForWire(r, run.session, run.tenantId));
+  if (sent.indexOf(null) !== -1) {
+    result.reason = 'anonymization-key-missing';
+    result.deferred += 1;
+    result.deferredOther += 1;
+    return null;
+  }
   run.followups.set(id, { sessionErrors });
-  return { sessionId: id, reports, timeline, parentMaxLine: verdict.upload.parentMaxLine, usageSource: usageSource == null ? null : usageSource };
+  return { sessionId: id, reports: sent, timeline, parentMaxLine: verdict.upload.parentMaxLine, usageSource: usageSource == null ? null : usageSource };
 }
 
 // A VS Code chat file has no CLI head: its folder is the cwd, and the VS Code checkpoint stamps its own account.

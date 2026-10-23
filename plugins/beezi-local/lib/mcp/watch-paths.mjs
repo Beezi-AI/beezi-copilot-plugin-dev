@@ -1,17 +1,16 @@
 // The three capture paths of one watcher pass (due, fresh, history) and the per-pass bookkeeping they share.
-// pass: { ctx, nowMs, summary, record, dirty, sessions, entries, recipients, routeCtx }; a path returns 'stopped' | 'lost' | null.
+// pass: { ctx, nowMs, summary, record, dirty, sessions, entries, recipients, cutoffs, routeCtx }; a path returns 'stopped' | 'lost' | null.
 import { loadSessionState, vscodeCursorOf } from '../state/session-state.mjs';
 import { storeObservation, settlementKey, isSettled, markSettled } from '../state/watcher-record.mjs';
-import { loadLedger, isComplete } from '../state/ledger.mjs';
 import { readTrackingState } from '../state/tracking.mjs';
 import { listAccounts, AccountStatus } from '../accounts/index-store.mjs';
-import { isMultiTenant } from '../workspace/tenants.mjs';
 import { establishStart } from '../delivery/coverage.mjs';
 import { runAnyCheckpoint } from '../pipeline/run-any-checkpoint.mjs';
 import { runAudit, planHistoryRuns } from '../history/history-run.mjs';
 import { createRunCache } from '../history/run-cache.mjs';
+import { sessionStartMs, linkCutoffMs } from '../history/offer-scan.mjs';
 import { SYNC_MODE } from '../contract/history.mjs';
-import { noHook, historySettlements, laggingReplays, settledByAll } from './watch-planner.mjs';
+import { noHook, historySettlements, laggingReplays, settledByAll, postLinkRecipients } from './watch-planner.mjs';
 import { recipientsFor, sessionCwd } from './watch-recipients.mjs';
 import { finiteNumber } from '../core/guards.mjs';
 import { yieldToLoop } from '../core/async.mjs';
@@ -22,7 +21,8 @@ const HISTORY_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const MAX_HISTORY_PER_PASS = 50;
 const MAX_LOGGED_REASONS = 500;
 const MAX_ATTEMPTS = 500;
-const HISTORY_IO = Object.freeze({ runAudit, createRunCache });
+const HISTORY_IO = Object.freeze({ runAudit, createRunCache, planHistoryRuns, sessionStartMs });
+const DUE_IO = Object.freeze({ runAnyCheckpoint });
 
 export function messageOf(error) {
   return error != null && typeof error.message === 'string' && error.message !== '' ? error.message : 'unknown error';
@@ -83,12 +83,12 @@ function recordOutcome(pass, entry, result) {
   return false;
 }
 
-async function checkpointOne(pass, item, inputExtra, options) {
+async function checkpointOne(pass, item, inputExtra, options, io = DUE_IO) {
   const { entry, state } = item;
   pass.summary.checkpointed += 1;
   let result = null;
   try {
-    result = await runAnyCheckpoint(
+    result = await io.runAnyCheckpoint(
       entry,
       { cwd: sessionCwd(state, entry.transcriptPath), trigger: 'watcher', budgetMs: CHECKPOINT_BUDGET_MS, ...inputExtra },
       options,
@@ -102,12 +102,29 @@ async function checkpointOne(pass, item, inputExtra, options) {
   return recordOutcome(pass, entry, result);
 }
 
-// Path A: established sessions, an ordinary incremental checkpoint (routing and the live gate are the engine's).
-export async function runDuePath(pass, due) {
+// Path A: established sessions, an ordinary incremental checkpoint (routing, Ask holds and the live gate are the engine's).
+// {} when no recipient is pre-link; null when every one the session routes to is; else the engine drops the pre-link workspaces.
+function dueOptions(pass, item) {
+  const allowed = postLinkRecipients(item.entry, pass.recipients, pass.cutoffs);
+  if (allowed.length === pass.recipients.length) return {};
+  const routed = allowed.length === 0 ? [] : recipientsFor(item, pass.recipients, pass.routeCtx);
+  if (!routed.some((r) => allowed.indexOf(r) !== -1)) return null;
+  const dropped = new Set(pass.recipients.filter((r) => allowed.indexOf(r) === -1).map((r) => settlementKey(r.key, r.tenantId)));
+  return { dropTarget: (key, tenantId) => dropped.has(settlementKey(key, tenantId)) };
+}
+
+export async function runDuePath(pass, due, io = DUE_IO) {
   for (const item of due) {
     if (!pass.ctx.alive()) return 'stopped';
+    const id = item.entry.sessionId;
+    const options = dueOptions(pass, item);
+    if (options == null) {
+      noteAttempt(pass, id);
+      noteReason(pass, id, 'pre-link for every workspace');
+      continue;
+    }
     const noHookYet = noHook(item.prior);
-    await checkpointOne(pass, item, { withTimeline: noHookYet, withQuota: noHookYet }, {});
+    await checkpointOne(pass, item, { withTimeline: noHookYet, withQuota: noHookYet }, options, io);
     await yieldToLoop();
   }
   return pass.ctx.renew() ? null : 'lost';
@@ -129,6 +146,7 @@ async function replayLagging(pass, item, start, recipients) {
 }
 
 // Path B: unestablished and active (history refuses these, so every hook-less Agent Host session lands here); the start line comes from the shared coverage rule.
+// No mtime gate applies here or to the lagging replays: the K6 live rule governs active sessions.
 export async function runFreshPath(pass, fresh) {
   for (const item of fresh.slice(0, MAX_ESTABLISH_PER_PASS)) {
     if (!pass.ctx.alive()) return 'stopped';
@@ -153,20 +171,6 @@ export async function runFreshPath(pass, fresh) {
   return pass.ctx.renew() ? null : 'lost';
 }
 
-// A single-workspace account's one-time backfill is sealed: the local flag.
-function backfillSealed(row) {
-  const tracking = readTrackingState(row.key);
-  return tracking != null && tracking.backfillCompleted === true;
-}
-
-// The workspaces whose history is settled: the one-time import sealed, or a clean sync covered it.
-export function settledRuns(row, identity, plan) {
-  return plan.runs.filter((run) => {
-    const ledger = loadLedger(row.key, identity, run.tenantId);
-    return isComplete(ledger) || typeof ledger.historySettledAt === 'string';
-  });
-}
-
 // The account's history pass is due and some live recipient belongs to it.
 function historyDue(pass, row) {
   const last = finiteNumber(pass.record.historyAt[row.key]);
@@ -179,15 +183,41 @@ function liveTenantIds(pass, row) {
   return pass.recipients.filter((r) => r.key === row.key).map((r) => r.tenantId);
 }
 
-// Each run takes only the batch sessions its workspace has not settled yet. → [{ run, result }] for the runs executed.
+// Memoized per scan entry object, so the batch pick and the runs read each head once.
+const startCache = new WeakMap();
+function startOf(entry, io) {
+  if (!startCache.has(entry)) startCache.set(entry, io.sessionStartMs(entry));
+  return startCache.get(entry);
+}
+
+const Owed = Object.freeze({ SETTLED: 'settled', OWED: 'owed', PRE_LINK: 'pre-link', UNKNOWN: 'unknown' });
+
+// A session's verdict for one workspace: pre-link when last written, or started, before its link cutoff (the mtime needs no
+// head read); an unreadable start is unknown, so it is judged again next pass.
+function judgeFor(pass, row, tenantId, tracking, io) {
+  const key = settlementKey(row.key, tenantId);
+  const cutoff = linkCutoffMs(row, tenantId, tracking);
+  return (entry) => {
+    if (isSettled(pass.record, key, entry)) return Owed.SETTLED;
+    // CR1: a workspace with no known link time is sent nothing here, and settles so the quiet set can drain.
+    if (cutoff == null) return Owed.PRE_LINK;
+    if (entry.mtimeMs < cutoff) return Owed.PRE_LINK;
+    const start = startOf(entry, io);
+    if (start == null) return Owed.UNKNOWN;
+    return start < cutoff ? Owed.PRE_LINK : Owed.OWED;
+  };
+}
+
+// Each run takes only the batch sessions its workspace still owes. → [{ run, result }] for the runs executed.
 export async function runHistoryRuns(pass, row, historyPlan, batch, io = HISTORY_IO) {
   const executed = [];
   // One git cache per call, never longer: the watcher runs for hours while repos and branches change.
   const runCache = io.createRunCache();
+  const tracking = readTrackingState(row.key);
   for (const run of historyPlan.runs) {
     if (!pass.ctx.alive()) break;
-    const key = settlementKey(row.key, run.tenantId);
-    const ids = batch.filter((entry) => !isSettled(pass.record, key, entry)).map((entry) => entry.sessionId);
+    const judge = judgeFor(pass, row, run.tenantId, tracking, io);
+    const ids = batch.filter((entry) => judge(entry) === Owed.OWED).map((entry) => entry.sessionId);
     if (ids.length === 0) continue;
     const result = await io.runAudit(
       { runCache, onProgress: () => { pass.ctx.renew(); } },
@@ -210,26 +240,13 @@ function recordSettlements(pass, row, historyPlan, executed, batch) {
   return settled;
 }
 
-// One account's sync of its quiet batch. → false when the account was skipped (not sealed yet), true once it ran.
-async function syncAccountHistory(pass, row, batch) {
-  const { record } = pass;
-  const linked = pass.sessions.find((s) => s.key === row.key);
-  const identity = linked != null && linked.clientId != null ? linked.clientId : (row.clientId == null ? null : row.clientId);
-  const multi = isMultiTenant(row);
-  // Cheap single-workspace gate first: an unsealed account starts as soon as it seals, without re-planning every pass.
-  if (!multi && !backfillSealed(row)) return false;
-  const historyPlan = planHistoryRuns(row, { onlySessionIds: batch.map((entry) => entry.sessionId) });
-  const runs = multi ? settledRuns(row, identity, historyPlan) : historyPlan.runs;
-  if (multi && runs.length === 0) {
-    record.historyAt[row.key] = Date.now();
-    pass.dirty = true;
-    return false;
-  }
-  const settledPlan = { ...historyPlan, runs };
-  const executed = await runHistoryRuns(pass, row, settledPlan, batch);
-  const settled = recordSettlements(pass, row, settledPlan, executed, batch);
+// One account's sync of its quiet batch.
+async function syncAccountHistory(pass, row, batch, io) {
+  const historyPlan = io.planHistoryRuns(row, { onlySessionIds: batch.map((entry) => entry.sessionId) });
+  const executed = await runHistoryRuns(pass, row, historyPlan, batch, io);
+  const settled = recordSettlements(pass, row, historyPlan, executed, batch);
   // A busy history lease is fine: the user's own run covers it.
-  record.historyAt[row.key] = Date.now();
+  pass.record.historyAt[row.key] = Date.now();
   pass.dirty = true;
   pass.summary.history += 1;
   const results = executed.map((run) => run.result);
@@ -237,13 +254,25 @@ async function syncAccountHistory(pass, row, batch) {
   const deferred = results.reduce((total, result) => total + result.deferred, 0);
   const reason = results.map((result) => result.reason).find((r) => r != null);
   pass.ctx.say(`watcher history ${row.key}: imported=${imported} settled=${settled} deferred=${deferred} reason=${reason == null ? 'none' : reason}`);
-  return true;
 }
 
-// The quiet sessions this account still has to settle on some live workspace, newest first, at most MAX_HISTORY_PER_PASS.
-function accountBatch(pass, row, newestQuiet) {
-  const keys = liveTenantIds(pass, row).map((tenantId) => settlementKey(row.key, tenantId));
-  return newestQuiet.filter((entry) => keys.some((key) => !isSettled(pass.record, key, entry))).slice(0, MAX_HISTORY_PER_PASS);
+// The quiet sessions some live workspace of this account still owes, newest first, at most MAX_HISTORY_PER_PASS.
+// A workspace a judged session is proven pre-link for marks it settled, so later passes skip it until its mtime moves.
+function accountBatch(pass, row, newestQuiet, io) {
+  const tracking = readTrackingState(row.key);
+  const judges = liveTenantIds(pass, row).map((tenantId) => ({ key: settlementKey(row.key, tenantId), judge: judgeFor(pass, row, tenantId, tracking, io) }));
+  const batch = [];
+  for (const entry of newestQuiet) {
+    if (batch.length === MAX_HISTORY_PER_PASS) break;
+    let owed = false;
+    for (const { key, judge } of judges) {
+      const verdict = judge(entry);
+      if (verdict === Owed.OWED) owed = true;
+      else if (verdict === Owed.PRE_LINK && markSettled(pass.record, key, entry)) pass.dirty = true;
+    }
+    if (owed) batch.push(entry);
+  }
+  return batch;
 }
 
 // A quiet session leaves the history path only once every live recipient of a linked account settled it.
@@ -256,8 +285,8 @@ function observeFullySettled(pass, rows, newestQuiet) {
   }
 }
 
-// Path C: unestablished and idle is history, so it goes through sync, and only once the login import has sealed: the watcher never performs or front-runs it.
-export async function runHistoryPath(pass, quiet) {
+// Path C: unestablished and idle is history, so it goes through sync; a session that started before its workspace's link cutoff is past and never sent here.
+export async function runHistoryPath(pass, quiet, io = HISTORY_IO) {
   let rows = [];
   try {
     rows = (await listAccounts()).filter((row) => row.status === AccountStatus.LINKED);
@@ -269,10 +298,14 @@ export async function runHistoryPath(pass, quiet) {
   for (const row of rows) {
     if (!pass.ctx.alive()) break;
     if (!historyDue(pass, row)) continue;
-    const batch = accountBatch(pass, row, newestQuiet);
-    if (batch.length === 0) continue;
+    const batch = accountBatch(pass, row, newestQuiet, io);
+    if (batch.length === 0) {
+      pass.record.historyAt[row.key] = Date.now();
+      pass.dirty = true;
+      continue;
+    }
     try {
-      if (!(await syncAccountHistory(pass, row, batch))) continue;
+      await syncAccountHistory(pass, row, batch, io);
     } catch (error) {
       failStep(pass, 'history', error);
     }

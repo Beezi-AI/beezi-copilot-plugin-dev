@@ -6,26 +6,27 @@ import { newFoldersOf } from '../../workspace/targets.mjs';
 import { createRouteContext } from '../../workspace/route-key.mjs';
 import { choiceDir, resolveSession } from '../../workspace/session-routes.mjs';
 import { isLineSafePlace } from '../../workspace/rule-model.mjs';
-import { keepCurrentRules, placeNow, planReviewPlaces } from '../../history/history-routing.mjs';
+import { keepCurrentRules, planReviewPlaces } from '../../history/history-routing.mjs';
+import { placeNow } from '../../workspace/routing.mjs';
 import { listSessionFiles } from '../../sources/cli/session-files.mjs';
 import { UserError } from '../../core/errors.mjs';
 import {
-  commandLine, deferSuffix, idList, joinedHeaderLine, joinedLine, joinedPickCommandLine, ruleDone, workspaceLines,
+  commandLine, idList, joinedHeaderLine, joinedLine, joinedPickCommandLine, ruleDone, workspaceLines,
 } from '../../ux/workspace-lines.mjs';
 import { machineLine } from '../../ux/machine-lines.mjs';
 import { resolveTenantRef } from '../tenant-flags.mjs';
 import {
-  USAGE, afterRuleWrite, mayPersist, pastSessionOptions, parseSessionFlag, requireMulti, resolveAccount, selectedRows,
+  USAGE, mayPersist, pastSessionOptions, parseSessionFlag, requireMulti, resolveAccount, selectedRows,
 } from './args.mjs';
 import { bindOpenSessions, parseRuleTarget, ruleKey } from './rules.mjs';
 
 // Accounts that joined a workspace since their last re-pick here: every place to re-pick, with where it sends now (login Step 5a, /beezi-local-sync Step 1);
 // returns how many J lines it printed.
-export async function joined(argv, cx = { deferUpload: false }) {
+export async function joined(argv) {
   const [sub, ...after] = argv;
-  if (sub === 'add-all') { await joinedAddAll(after, cx); return; }
-  if (sub === 'done') { await joinedDone(after, cx); return; }
-  if (sub === 'pick') { await joinedPick(after, cx); return; }
+  if (sub === 'add-all') { await joinedAddAll(after); return; }
+  if (sub === 'done') { await joinedDone(after); return; }
+  if (sub === 'pick') { await joinedPick(after); return; }
   const { session, rest: afterSession } = parseSessionFlag(argv);
   const { account, rest } = await parseAccountFlag(afterSession);
   if (rest.length !== 0) throw new UserError(USAGE);
@@ -47,10 +48,10 @@ export async function joined(argv, cx = { deferUpload: false }) {
     for (const place of places) {
       total += 1;
       console.log(joinedLine(total, row, place, placeNow(row, place, newIds)));
-      console.log(joinedPickCommandLine(`J${total}-command`, place, row, cx.deferUpload));
+      console.log(joinedPickCommandLine(`J${total}-command`, place, row));
     }
-    console.log(commandLine('add-all-command', `joined add-all --account ${row.key}${deferSuffix(cx.deferUpload)}`));
-    console.log(commandLine('done-command', `joined done --account ${row.key}${deferSuffix(cx.deferUpload)}`));
+    console.log(commandLine('add-all-command', `joined add-all --account ${row.key}`));
+    console.log(commandLine('done-command', `joined done --account ${row.key}`));
   }
   console.log(machineLine([['joined', total]]));
   return total;
@@ -65,7 +66,7 @@ function extendedTenantIds(row, place, addIds, newIds) {
 }
 
 // Adds one newly-joined workspace to one place, extending its current targets; the caller marks the join reviewed via `joined done`.
-async function joinedPick(argv, cx = { deferUpload: false }) {
+async function joinedPick(argv) {
   const { session, rest: afterSession } = parseSessionFlag(argv);
   const { account, rest } = await parseAccountFlag(afterSession);
   const { target, refs } = parseRuleTarget(rest);
@@ -80,12 +81,11 @@ async function joinedPick(argv, cx = { deferUpload: false }) {
   const n = (await setWorkspaceRule(row.key, { kind: key.kind, match: key.match, label: key.label, tenantIds })).index;
   console.log(ruleDone(row, key, tenantIds, true));
   await bindOpenSessions(await resolveAccount(row.key), [n], current, ctx);
-  await afterRuleWrite(row.key, cx, cx.deps);
   console.log(machineLine([['rule', n]]));
 }
 
 // Adds the new workspaces to every listed place that already sends somewhere; Don't-track and no-rule-yet places stay as they are. Then marks the join reviewed.
-async function joinedAddAll(argv, cx = { deferUpload: false }) {
+async function joinedAddAll(argv) {
   const { session, rest: afterSession } = parseSessionFlag(argv);
   const { account, rest } = await parseAccountFlag(afterSession);
   if (rest.length !== 0) throw new UserError(USAGE);
@@ -115,13 +115,12 @@ async function joinedAddAll(argv, cx = { deferUpload: false }) {
     : `✓ ${names} now ${newIds.length === 1 ? 'gets' : 'get'} analytics from ${n === 1 ? '1 repo or folder' : `${n} repos and folders`}.`);
   if (n > 0) {
     await bindOpenSessions(await resolveAccount(row.key), added, current, ctx);
-    await afterRuleWrite(row.key, cx, cx.deps);
   }
   console.log(machineLine([['rules-added', n]]));
 }
 
 // Keeps rule-less places sending where they send now (Ask me only), then marks the account's new workspaces reviewed.
-async function joinedDone(argv, cx = { deferUpload: false }) {
+async function joinedDone(argv) {
   const { session, rest: afterSession } = parseSessionFlag(argv);
   const { account, rest } = await parseAccountFlag(afterSession);
   if (rest.length !== 0) throw new UserError(USAGE);
@@ -142,7 +141,6 @@ async function joinedDone(argv, cx = { deferUpload: false }) {
   console.log(machineLine([['reviewed', idList(newIds)]]));
   if (kept.length > 0) {
     await bindOpenSessions(await resolveAccount(row.key), kept, current, ctx);
-    await afterRuleWrite(row.key, cx, cx.deps);
   }
   console.log(machineLine([['kept', kept.length]]));
 }

@@ -2,6 +2,7 @@ import { updateAccount } from '../accounts/index-store.mjs';
 import { getAuthentication as _getAuthentication, INTERACTIVE_REFRESH_WAIT_MS } from '../auth/token.mjs';
 import { probeIdentity as _probeIdentity, PROBE_OUTCOMES } from '../auth/whoami.mjs';
 import { pinnedTo } from '../auth/recipients.mjs';
+import { anonymizationScope } from '../core/anon-target.mjs';
 import { AUTH_STATES, AUTH_REASONS } from '../contract/auth-states.mjs';
 import { DIAGNOSTIC_SOURCES } from '../contract/diagnostic-codes.mjs';
 import { recordAuthResult as _recordAuthResult } from '../auth/diagnostics.mjs';
@@ -21,7 +22,8 @@ export async function accountHealth(account, deps = {}) {
   const auth = await getAuthentication(deps, { account: account.key, waitMs });
   if (auth.authState !== AUTH_STATES.READY) return fail(authStatusLines(auth));
 
-  const probeSession = (a) => pinnedTo({ key: account.key, token: a.accessToken, clientId: a.clientId || account.clientId }, a);
+  const scope = anonymizationScope(account);
+  const probeSession = (a) => pinnedTo({ key: account.key, token: a.accessToken, clientId: a.clientId || account.clientId, ...scope }, a);
   let probe = await probeIdentity(probeSession(auth), deps);
   if (probe.outcome === PROBE_OUTCOMES.UNAUTHORIZED && probe.originMismatch !== true) {
     // The server's word beats this client's expiry estimate for an opaque token — but only a

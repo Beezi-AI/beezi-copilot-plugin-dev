@@ -3,6 +3,7 @@ import { ENDPOINTS, apiBase } from '../config/api.mjs';
 import { readBillingConfig } from '../billing/billing-config.mjs';
 import { buildAccountSyncPayload } from '../billing/account-sync.mjs';
 import { AUDIT_TIMEOUT_MS } from '../contract/history.mjs';
+import { anonymizeAccountSync } from '../core/anonymize-payload.mjs';
 import { attempt, identityFor } from './identity-apply.mjs';
 
 // Sets run.billingSnapshot; false (with result.reason set) when the registration failed.
@@ -11,7 +12,9 @@ export async function registerAccount(run) {
   try { snapshot = readBillingConfig(); } catch { snapshot = null; }
   const { stamp } = identityFor(snapshot);
   run.billingSnapshot = snapshot;
-  const registration = attempt(() => buildAccountSyncPayload({ config: snapshot }), {});
+  const built = attempt(() => buildAccountSyncPayload({ config: snapshot }), {});
+  // Hashed with the run's key while accounts are hidden, so it names the same account as the reports' account_uuid.
+  const registration = run.anonKinds.indexOf('accounts') === -1 ? built : anonymizeAccountSync(built, run.anonKey);
   // History reports can only resolve their account after it is registered for this workspace, and the reply is verified.
   if (run.dryRun || (stamp.account_uuid == null && stamp.account_email == null)) return true;
   return postRegistration(run, registration);

@@ -2,6 +2,7 @@
 // A failed initialize would mark this server "failed" for the whole session — stdio servers are never retried — so the
 // handshake must succeed even with no token, and this poll turns the eventual login into live tools with no /mcp reconnect.
 import { pinnedTo } from '../auth/recipients.mjs';
+import { anonymizationScope } from '../core/anon-target.mjs';
 import { AUTH_STATES } from '../contract/auth-states.mjs';
 import { resolveBridgeWorkspace } from './bridge-workspace.mjs';
 import { announceToolsChanged, reinitialize, selectScope } from './http-session.mjs';
@@ -26,7 +27,7 @@ export function createLoginPoll(bridge, deps) {
     const row = account ? await deps.getAccount(account) : null;
     const tenantId = resolveBridgeWorkspace(bridge, row).tenantId;
     selectScope(bridge, account, tenantId);
-    const token = pinnedTo({ key: account, token: auth.accessToken, clientId: (row && row.clientId), tenantId }, auth);
+    const token = pinnedTo({ key: account, token: auth.accessToken, clientId: (row && row.clientId), tenantId, ...anonymizationScope(row) }, auth);
     try {
       await reinitialize(bridge, token);
       // The client accepted an empty tool list during the synthetic handshake; this makes

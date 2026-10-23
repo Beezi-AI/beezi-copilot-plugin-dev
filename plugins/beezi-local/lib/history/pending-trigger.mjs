@@ -1,4 +1,4 @@
-// Starts the history worker for accounts that owe a workspace its past sessions, and the --defer-upload flag that holds it back.
+// Starts the history worker for accounts that owe a workspace the past sessions it consented to upload.
 import { AccountStatus, listAccounts } from '../accounts/index-store.mjs';
 import { scriptPath } from '../config/plugin-root.mjs';
 import { spawnDetached } from '../platform/spawn.mjs';
@@ -6,19 +6,12 @@ import { historyDue, pendingHistoryOf } from '../workspace/pending-history.mjs';
 
 export const HISTORY_WORKER_SCRIPT = scriptPath('history-worker.mjs');
 
-const DEFER_FLAG = '--defer-upload';
-
-// --defer-upload writes the rule but leaves the upload to the flow that runs next (sync, login).
-export function takeDeferFlag(argv) {
-  return { deferUpload: argv.indexOf(DEFER_FLAG) !== -1, argv: argv.filter((arg) => arg !== DEFER_FLAG) };
-}
-
 async function linkedRows(deps) {
   const list = deps.listAccounts == null ? listAccounts : deps.listAccounts;
   return (await list()).filter((a) => a.status === AccountStatus.LINKED);
 }
 
-// After a rule write: starts the worker when the account owes any workspace its history. Never throws.
+// After a yes to the offer: starts the worker when the account owes any workspace its history. Never throws.
 export async function startHistoryWorker(key, deps = {}) {
   try {
     const row = (await linkedRows(deps)).find((a) => a.key === key);

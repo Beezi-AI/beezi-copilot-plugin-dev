@@ -1,6 +1,6 @@
 // History-run vocabulary: the run mode, its request budget, the run-ending halts and the per-session chunk verdicts.
 
-// Repeatable history sync (/beezi-local-sync) rather than the one-time pull driven by /beezi-local-login.
+// Repeatable history sync (/beezi-local-sync) and the Audit backfill mode; past sessions upload only after a yes.
 export const SYNC_MODE = 'sync';
 
 // Every history request's budget: a foreground command, so the hook budget behind postJson's 3s default does not apply.

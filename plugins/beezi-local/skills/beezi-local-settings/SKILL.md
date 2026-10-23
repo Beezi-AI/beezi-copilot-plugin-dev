@@ -145,10 +145,7 @@ value, or "Beezi workspace" when empty; then the last choice — "Not tracked: n
 ("Not tracked: nothing from sessions outside a project folder is sent" for `outside`). When it changes an
 existing rule, add ", current" after the workspaces in that rule's `tenants=` (or after the last
 choice when `tenants=none`). `<ids>` = the chosen workspaces' `tenant=` values joined by commas, or
-`none` when the last choice is the whole answer.
-The last choice stands alone: when an answer has it together with a workspace, run nothing and ask the
-same question once more, starting with `"Don't track" can't be combined with a workspace — pick one or the other.`
-A second mixed answer is a dismissal. Nothing chosen → run nothing.
+`none` when the last choice is picked (it wins over the others). Nothing chosen → run nothing.
 
 ## Rules
 

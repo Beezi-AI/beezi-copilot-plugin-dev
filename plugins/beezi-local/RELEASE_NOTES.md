@@ -1,14 +1,19 @@
 # Beezi plugin release notes
 
-## 0.1.94 (2026-10-22) — Pick several workspaces, and no silent drops
+## 0.2.0 (2026-10-22) — Anonymized workspaces and past sessions on your say-so
+
+### New
+- **Choose what each workspace hides** — a Beezi workspace can hide repos, branches, session names, your computer name and your GitHub account, each on its own. Hidden details arrive as made-up values, and hiding session names also leaves out the agent name and error messages.
+- **Past sessions only after you say yes** — Beezi shows how many past sessions it found, from when and where, and what uploading them sends, then uploads them only after you choose "Upload". You can be asked at sign-in, during setup, when a new session starts or from `/beezi-local-sync`, and `/beezi-local-sync` always asks.
+- **Privacy notice** — the first session start in an anonymized workspace says that its sessions are anonymized, once per account and workspace.
+- **Appears as** — `/beezi-local-settings account` shows the name this machine appears as in an anonymized workspace.
 
 ### Improved
-- **Several workspaces for this machine** — "Where should analytics from this machine go?" in `/beezi-local-login` and the terminal setup has a "Several workspaces…" choice that sends everything to each workspace you pick.
-- **Several workspaces at session start** — the question about a new repo or folder says you can type several workspace names.
-
-### Fixed
-- **"Don't track" stands alone** — picking "Don't track" together with a workspace no longer saves "not tracked" and drops the workspace. The terminal setup clears the other ticks, and Copilot asks again.
-- **"None of these" stands alone** — picking "None of these" together with repos for a workspace you joined no longer drops those repos and marks the join reviewed.
+- **Rule changes no longer upload history** — adding or changing a folder rule never uploads past sessions. At most, Beezi asks again about that folder's past sessions.
+- **"Not now" is remembered** — Beezi doesn't ask that workspace again until its owner changes the past-sessions setting. Run `/beezi-local-sync` any time to upload them.
+- **Hidden details stay hidden** — a detail the question said was hidden is hidden in that upload even if the setting changes before it runs.
+- **Declined sessions** — sessions you said Not now to are not asked about again until the workspace's choice changes; `/beezi-local-sync` still shows them.
+- **GitHub sign-in in hidden workspaces** — when GitHub logins are hidden, Beezi also sends whether the account is on github.com.
 
 ## 0.1.93 (2026-10-21) — Clearer settings, a status-line badge and one-question sign-in
 

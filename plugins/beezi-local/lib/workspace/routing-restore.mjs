@@ -2,7 +2,6 @@
 import { mutateRow, AccountStatus, NO_SUCH_ACCOUNT } from '../accounts/index-store.mjs';
 import { routingOf, sameRouting } from '../state/rule-undo.mjs';
 import { UserError } from '../core/errors.mjs';
-import { removalRequestIds, requestHistory } from './pending-history.mjs';
 
 // Thrown inside mutateRow so a refused restore saves nothing; carries the outcome.
 class RestoreRefused {
@@ -16,8 +15,6 @@ export function restoreRouting(key, { expected, before }) {
     if (!sameRouting(routingOf(row), expected)) throw new RestoreRefused('changed');
     row.workspaceRules = before.workspaceRules;
     row.newFolders = before.newFolders;
-    // Every workspace the restored rules or New folders reach is owed its history; over-requesting is harmless.
-    requestHistory(row, removalRequestIds(row), new Date().toISOString());
     return 'restored';
   }).catch((error) => {
     if (error instanceof RestoreRefused) return error.outcome;

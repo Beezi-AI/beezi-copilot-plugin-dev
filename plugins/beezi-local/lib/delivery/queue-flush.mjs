@@ -18,6 +18,7 @@ import { unwrapQueueFile, releaseHeldFile, sortQueueFiles, sweepHeldQueue, waitO
 import { FlushSkip, countPostable, noteError, noteRefusal, noteRetry, noteSettled, noteTransport, runGuarded } from './flush-guard.mjs';
 import { coverageLookup, coveredWindow } from './rejected-reposts.mjs';
 import { FileAction, REPORT_OUTCOME, applyResponse, classifyReportResponse, errorText } from './report-verdicts.mjs';
+import { reportForWire } from '../core/anon-target.mjs';
 
 // The lastError of a pass skipped because another process holds the account's flush lock.
 export const FLUSH_BUSY_ERROR = 'another Beezi process is delivering them';
@@ -120,6 +121,10 @@ function moveFile(filePath, action) {
   }
 }
 
+function dropFile(filePath, result) {
+  try { fs.unlinkSync(filePath); result.rejected += 1; } catch { /* best-effort */ }
+}
+
 function addCounts(result, counts) {
   for (const c of Object.keys(counts)) result[c] += counts[c];
 }
@@ -166,12 +171,18 @@ function tallyAnswer(pass, outcome, verdict, status, body) {
   return false;
 }
 
-// Posts one queued payload and settles the answer; true stops the pass (deadline, transport failure, a stop verdict).
+// Posts one queued payload's wire body and settles the answer; true stops the pass (deadline, transport failure, a stop verdict).
+// A private payload with no key to anonymize it is dropped unsent.
 async function postFile(run, index, filePath, payload, tenantId) {
   const { result } = run;
+  const wire = reportForWire(payload, run.session, tenantId);
+  if (wire == null) {
+    dropFile(filePath, result);
+    return false;
+  }
   let res;
   try {
-    res = await postWithRenew(run.send, run.auth, tenantId, payload);
+    res = await postWithRenew(run.send, run.auth, tenantId, wire);
   } catch (error) {
     // Transport failure (network, timeout): keep the file and stop; the rest waits for the next flush. A credential pinned
     // to another API origin is an auth state only a new login clears: no backoff, and status says so.
@@ -245,9 +256,8 @@ async function flushFile(run, index) {
   if (salvaged) result.salvaged += 1;
   if (triage.action === QueueEntryAction.RELEASE) releaseInto(run, index, filePath, entry.payload);
   else if (triage.action === QueueEntryAction.WAIT) waitOrExpire(filePath, result);
-  else if (triage.action === QueueEntryAction.DROP_DARK) {
-    try { fs.unlinkSync(filePath); result.rejected += 1; } catch { /* best-effort */ }
-  } else if (run.refusedTenants.has(triage.tenantId)) result.deferred += 1;
+  else if (triage.action === QueueEntryAction.DROP_DARK) dropFile(filePath, result);
+  else if (run.refusedTenants.has(triage.tenantId)) result.deferred += 1;
   else return postFile(run, index, filePath, entry.payload, triage.tenantId);
   return false;
 }

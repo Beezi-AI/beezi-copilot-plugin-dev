@@ -1,7 +1,7 @@
 ---
 name: beezi-local-sync
-description: Upload past Copilot CLI and VS Code Agent Host sessions to Beezi analytics, skipping what Beezi already has. Safe to run any number of times. Use when the user asks to sync or re-upload their Copilot history to Beezi, or when their Beezi analytics miss older sessions.
-argument-hint: "[account email]"
+description: Show what uploading past Copilot CLI and VS Code Agent Host sessions to Beezi analytics sends, and upload them after the user says Upload, skipping what Beezi already has. Safe to run any number of times. Use when the user asks to sync or re-upload their Copilot history to Beezi, or when their Beezi analytics miss older sessions.
+argument-hint: "[account email | upload]"
 allowed-tools: shell(node:*), ask_user
 ---
 
@@ -28,7 +28,11 @@ In this skill only, if the preflight printed `mode=argument-only`, skip Step 1 (
 and go to Step 2.
 
 Arguments: the text the user typed after the skill's slash command in the message that started this
-skill; none if they typed only the command. When it names an account (an email or key), `<key>` below
+skill; none if they typed only the command. `upload` answers Step 2's list from an earlier run of
+this skill in this conversation: after Step 0, run the text of each `accept-command=` line of that
+earlier output EXACTLY, once each, write each command's line verbatim, and stop. When this conversation
+has no such output, say `upload` answers nothing here and run the skill as if no argument was
+given. When it names an account (an email or key), `<key>` below
 is that account's key from `node "<plugin-root>/scripts/accounts.mjs"` (for you only).
 
 Step 0 — run EXACTLY `node "<plugin-root>/scripts/preflight.mjs" --for sync`. If its first line
@@ -50,7 +54,7 @@ to the sync: everything after that line is Step 2's output, and no other command
 fails shows a `✗` line inside its block instead and counts as nothing to ask: write that line
 verbatim.
 
-First, new workspaces: the `<joined>` block is what `workspace.mjs joined --defer-upload` prints, for
+First, new workspaces: the `<joined>` block is what `workspace.mjs joined` prints, for
 you only.
 
 Lines:
@@ -70,13 +74,13 @@ Lines:
 
 `joined=0` → go to "Then, repos and folders with no rule".
 
-Run the printed commands unchanged; whatever they route gets its history uploaded.
+Run the printed commands unchanged.
 
 Per account with `J` lines (with several accounts, add " (<email>)" right after each question's "go?",
 or after "<name>?" in the per-workspace questions):
 
 More than 4 `J` lines → first ask "You joined <names>. Where should analytics for these <N> repos and
-folders go? Their past sessions will be sent there too." (`<N>` = that account's number of `J` lines) with:
+folders go?" (`<N>` = that account's number of `J` lines) with:
 - "Add <names> to all <N> — repos you don't track, and ones with no rule yet, stay as they are";
 - "Choose repos — pick which repos and folders go to each new workspace";
 - "Leave them as they are — nothing changes, and you're not asked about <names> again".
@@ -89,7 +93,7 @@ the next /beezi-local-sync asks again.
 
 Per-workspace questions: one `ask_user` question per `W.` line with `new=yes` of that account, in
 order, where `<name>` is that line's text after `W. ` up to ` account=`. Ask "Which repos and folders
-should also send analytics to <name>? Their past sessions will be sent there too." Several allowed:
+should also send analytics to <name>?" Several allowed:
 number the choices and end the question with " You can pick more than one: type their numbers
 separated by commas." Choices: one per `J` line of that account, in order, "<short> — Now: <where>"
 (or "<short> — No rule yet" when `<where>` is `no rule yet`), where `<short>` is the `J` line's text
@@ -99,11 +103,9 @@ accounts and the choice numbers are not: preserve each printed `J` number to mat
 use a choice number to look up a `J<i>-command`.
 
 For each picked `J` line, run its `J<i>-command=` text EXACTLY ONCE, changing only the final
-`<tenant>`: that workspace's `tenant=` value inside single quotes, like `'<id>'`. "None of these"
-stands alone: as the whole answer it runs no `J<i>-command` and still counts as an answer. An answer
-with "None of these" together with a repo runs nothing and is not an answer: ask the same question
-once more, starting with `"None of these" can't be combined with repos — pick one or the other.` A
-second mixed answer is a dismissal. An empty or unmatched answer, or a dismissed question, is no answer and runs nothing.
+`<tenant>`: that workspace's `tenant=` value inside single quotes, like `'<id>'`. "None of these",
+alone or with other choices, wins: run no `J<i>-command` for that question (it still counts as an
+answer). An empty or unmatched answer, or a dismissed question, is no answer and runs nothing.
 After every new workspace's question has been answered, run the `done-command=` text EXACTLY ONCE;
 otherwise run no `done-command`, and the next login or sync asks again. Never rebuild a command or re-quote its path. Write each command's first
 line verbatim.
@@ -113,7 +115,7 @@ already printed the `<routes>` block. After the `J` questions (answered or not) 
 run EXACTLY, with the same `--account` and `--tenant` as the Step 1 command:
 `node "<plugin-root>/scripts/sync.mjs" --review-routes`. It prints the `<routes>` block and
 `review=<n>`, and on `review=0` goes straight on to the sync as the Step 1 command does. The
-`<routes>` block is what `workspace.mjs routes --defer-upload` prints. It is for you only, except the
+`<routes>` block is what `workspace.mjs routes` prints. It is for you only, except the
 one line named below. For each account in several workspaces set to "Ask me", it prints a block:
 `<email>: <N repos or folders have | 1 repo or folder has> past sessions with no rule (<M> sessions) account=<key>`; `W.`
 lines (one per workspace: `W. <workspace> account=<key> tenant=<id> role=<role>`); `P<i>. <short>
@@ -141,24 +143,32 @@ For each account with `P` lines (with several accounts, end every question with 
   sessions outside a project folder is sent" for `outside`).
 
 For each answered `P` line run its `P<i>-command=` text EXACTLY ONCE, changing only the final
-`<tenants>`: the chosen `tenant=` values joined by commas inside one pair of single quotes, like `'<id>,<id>'`, or `none` when the last choice is the whole answer.
-The last choice stands alone: when an answer has it together with a workspace, run nothing and ask
-the same question once more, starting with `"Don't track" can't be combined with a workspace — pick one or the other.` A second
-mixed answer is a dismissal. Never rebuild a command or re-quote its path. Write each command's first
-line verbatim.
+`<tenants>`: the chosen `tenant=` values joined by commas inside one pair of single quotes, like `'<id>,<id>'`, or `none` when the last choice was picked
+(it wins). Never rebuild a command or re-quote its path. Write each command's first line verbatim.
 
-Step 2 — sync. When the last listing printed `review=0`, the sync already ran: its output is
-everything after that `review=0` line, so write it verbatim as your reply text and run nothing more.
-Otherwise — after the `P` questions (answered or not) and their commands, or in `mode=argument-only`
-— run EXACTLY `node "<plugin-root>/scripts/sync.mjs"` with no flags. Add `--account <key>`
-only when the user named an account, and `--account <key> --tenant '<id>[,<id>…]'` only when the user
-asks to sync to specific workspaces — an override that sends every past session there, ignoring
-rules. Never add or suggest any other flag than Step 1's `--review` and `--review-routes` (`--force`,
-`--since`, `--dry-run` are not offered). Write its output verbatim as your reply text.
+Step 2 — past sessions. When the last listing printed `review=0`, the sync already ran: its output is
+everything after that `review=0` line. Otherwise — after the `P` questions (answered or not) and
+their commands, or in `mode=argument-only` — run EXACTLY `node "<plugin-root>/scripts/sync.mjs"`
+with no flags. Add `--account <key>` only when the user named an account, and
+`--account <key> --tenant '<id>[,<id>…]'` only when the user asks to sync to specific workspaces — an
+override that offers every past session there, ignoring rules. Never add or suggest any other flag
+than Step 1's `--review` and `--review-routes` (`--force`, `--since`, `--dry-run` are not offered).
 
-It resumes each session from what Beezi already has, so repeating it is safe. Output saying
-"everything is already uploaded" is success: do not re-run it or look for flags to force it. "this
-machine is not linked" → /beezi-local-login. "does not support /beezi-local-sync yet" → the Beezi server needs an
-update; the history is not lost. A `Beezi (<account>): …` line says where that account's past
-sessions go; "not sent this time" is expected after a skipped question — the next /beezi-local-sync asks
-again, and /beezi-local-settings rules adds a rule from inside that repo or folder.
+Its output ends in `offers=<n>` (never shown), after one `<offer account="<key>" tenant="<id>">` …
+`</offer>` block per workspace with past sessions to upload (the tag lines are never shown). A `✗`
+line outside the blocks says a workspace could not be checked, or "this machine is not linked"
+(→ /beezi-local-login): write it verbatim. A `✓` line outside the blocks says an upload accepted earlier is
+still running for a workspace: write it verbatim. `offers=0` with no `✗` or `✓` line means there is
+nothing to upload now: say so in one sentence. For each block, in order:
+- write its lines before `question=` verbatim;
+- ask the `question=` text with `ask_user`, with the choices "Upload" and "Not now";
+- "Upload" → run its `accept-command=` text EXACTLY and write its line verbatim;
+- anything else, a dismissed question or no answer → run its `decline-command=` text EXACTLY and write
+  its line verbatim.
+
+In `mode=argument-only`, after each block's lines before `question=`, write its `question=` text
+followed by the numbered list `1. Upload` and `2. Not now`; then stop and tell the user to run
+`/beezi-local-sync upload` to upload them. Run no `accept-command=` or `decline-command=` then.
+
+Never answer the question yourself and never run an `accept-command=` without "Upload". An upload
+runs in the background, and a later Copilot session shows its result.

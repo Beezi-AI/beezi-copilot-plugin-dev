@@ -1,6 +1,8 @@
 import { apiBase, ENDPOINTS } from '../config/api.mjs';
 import { isOriginMismatch, requestJson } from '../platform/http.mjs';
 import { AUTH_REASONS } from '../contract/auth-states.mjs';
+import { displayText } from '../core/text.mjs';
+import { parseAnonymization, parsePastSessions } from '../core/anon-target.mjs';
 
 // What the portal said about this token. 401 and 403 are NOT the same answer: 401 is a verdict
 // on the credential (one refresh may fix it), 403 is a verdict on the account (a seat, a tenant,
@@ -22,20 +24,6 @@ const VERIFICATION_UNAVAILABLE = 'OAUTH_VERIFICATION_UNAVAILABLE';
 
 // A tenant id becomes the X-Beezi-Tenant header and a file-name tag; the portal's ids are UUIDs.
 const TENANT_ID = /^[A-Za-z0-9_-]{1,64}$/;
-const DISPLAY_MAX = 60;
-// Control characters, line breaks, quotes, backticks, backslashes and angle brackets become spaces.
-const DISPLAY_SPACE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029`"\u201c\u201d\u201e\u201f\\<>]+/g;
-// Zero-width, bidi and Unicode tag characters: invisible to a person but read by a model, so dropped.
-const DISPLAY_INVISIBLE = /[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\u{e0000}-\u{e007f}]/gu;
-
-// Server-supplied names reach model-visible instructions and CLI output. The result holds no character that can
-// close a quoted span or start a line, is at most `max` long (null = uncapped), and is null when nothing is left.
-export function displayText(value, max = DISPLAY_MAX) {
-  if (typeof value !== 'string') return null;
-  let text = value.replace(DISPLAY_INVISIBLE, '').replace(DISPLAY_SPACE, ' ').replace(/\s+/g, ' ').trim();
-  if (max != null && text.length > max) text = text.slice(0, max).replace(/[\ud800-\udbff]$/, '').trim();
-  return text === '' ? null : text;
-}
 
 function tenantIdOrNull(value) {
   return typeof value === 'string' && TENANT_ID.test(value) ? value : null;
@@ -90,18 +78,21 @@ export async function probeIdentity(session, deps = {}) {
     };
   }
   const body = res.body == null ? {} : res.body;
+  const tenantId = tenantIdOrNull(body.tenantId);
   return {
     outcome: PROBE_OUTCOMES.AUTHENTICATED,
     httpStatus: res.status,
     identity: {
       email: body.email == null ? null : body.email,
       name: displayText(body.name),
-      tenantId: tenantIdOrNull(body.tenantId),
+      tenantId,
       tenantName: displayText(body.tenantName),
       tenantTier: body.tenantTier == null ? null : body.tenantTier,
       trackingMode: body.trackingMode == null ? null : body.trackingMode,
       backfillCompleted: body.backfillCompleted === true,
       tenants: parseTenants(body.tenants),
+      anonymization: parseAnonymization(body.anonymization, tenantId),
+      pastSessions: parsePastSessions(body.pastSessions),
     },
   };
 }
@@ -117,6 +108,8 @@ function parseTenants(raw) {
       role: displayText(t.role),
       type: displayText(t.type),
       joinedAt: typeof t.joinedAt === 'string' && Number.isFinite(Date.parse(t.joinedAt)) ? t.joinedAt : null,
+      anonymization: parseAnonymization(t.anonymization, t.id),
+      pastSessions: parsePastSessions(t.pastSessions),
     }));
 }
 
