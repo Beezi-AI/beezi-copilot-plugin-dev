@@ -3,6 +3,7 @@
 ## 0.1.95 (2026-10-26) — Terminal setup sees what your sessions see
 
 ### Fixed
+- **Uploads reach Beezi again** — the plugin uses Beezi's new address, `https://api.beezi.ai`, and existing sign-ins keep working without a new `/beezi-staging-login`.
 - **One GitHub account per machine** — a `COPILOT_GITHUB_TOKEN` or `GITHUB_TOKEN` set in your shell no longer reaches terminal setup, the same way Copilot hides them from plugins, so setup no longer records a different GitHub account than your sessions report. Setup prints a warning when Copilot uses such a token, and suggests `GH_TOKEN`, which Beezi can see.
 
 ## 0.1.94 (2026-10-22) — Pick several workspaces, and no silent drops

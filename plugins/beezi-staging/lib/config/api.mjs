@@ -18,7 +18,16 @@ export function apiBase(env = process.env, envName = BEEZI_ENV) {
   const override = env.BEEZI_API_URL;
   if (override != null && (envName !== '' || isSafeApiOverride(override))) return override;
   if (ENV_API_BASE != null) return ENV_API_BASE;
-  return "https://beezi-api-prod.azurewebsites.net/api";
+  return "https://api.beezi.ai/api";
+}
+
+// Prod logins made before the API moved pinned the old host; both name the same Clerk issuer, so the pin reads as the new one.
+export const LEGACY_PRODUCTION_API_ORIGIN = 'https://beezi-api-prod.azurewebsites.net';
+export const PRODUCTION_API_ORIGIN = 'https://api.beezi.ai';
+
+// A stored API base as the prod build reads it: the legacy prod base compares as the current prod base, never apiBase().
+export function storedApiBase(stored, envName = BEEZI_ENV) {
+  return envName === '' && stored === `${LEGACY_PRODUCTION_API_ORIGIN}/api` ? `${PRODUCTION_API_ORIGIN}/api` : stored;
 }
 
 // Origin of the API host — the OAuth discovery documents are mounted at the

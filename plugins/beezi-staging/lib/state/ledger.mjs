@@ -1,5 +1,5 @@
 import { auditLedgerFile } from '../config/paths.mjs';
-import { apiBase } from '../config/api.mjs';
+import { apiBase, storedApiBase } from '../config/api.mjs';
 import { readJson, writeJsonSecure } from '../platform/fs-store.mjs';
 import { BackfillSessionStatus } from '../contract/history.mjs';
 
@@ -31,7 +31,7 @@ export function loadLedger(key, identity = null, tenantId = null) {
   if (raw.identity && identity && raw.identity !== identity) {
     return emptyLedger(identity);
   }
-  if (raw.apiBase && raw.apiBase !== apiBase()) {
+  if (raw.apiBase && storedApiBase(raw.apiBase) !== apiBase()) {
     return emptyLedger(identity);
   }
   if (!raw.identity && identity) raw.identity = identity;
