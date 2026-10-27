@@ -1,5 +1,10 @@
 # Beezi plugin release notes
 
+## 0.2.1 (2026-10-23) — A clearer past-sessions summary
+
+### Improved
+- **Past-sessions summary as a checklist** — the summary now lists what is sent, what your workspace hides and what is never sent, each on its own short line. The question offers "Upload now" or "Not now", and the terminal setup asks it as an arrow-key menu.
+
 ## 0.2.0 (2026-10-22) — Anonymized workspaces and past sessions on your say-so
 
 ### New

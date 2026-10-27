@@ -309,9 +309,9 @@ Its last line is `offers=<n>` (never shown). `offers=0` means there is nothing t
 about past sessions. A `✗` line outside the blocks says a workspace could not be checked: write it
 verbatim. Otherwise the output holds one `<offer account="<key>" tenant="<id>">` … `</offer>` block per
 workspace (the tag lines are never shown). For each block, in order:
-- write its lines before `question=` verbatim;
-- ask the `question=` text with `ask_user`, with the choices "Upload" and "Not now";
-- "Upload" → run its `accept-command=` text EXACTLY and write its line verbatim;
+- write its lines before `question=` verbatim inside one plain fenced code block (```, no language), keeping every leading space and line break;
+- ask the `question=` text with `ask_user`, with the choices "Upload now" and "Not now";
+- "Upload now" → run its `accept-command=` text EXACTLY and write its line verbatim;
 - anything else, a dismissed question or no answer → run its `decline-command=` text EXACTLY and write
   its line verbatim.
 
@@ -319,7 +319,7 @@ In `mode=argument-only`, ask nothing and upload nothing: for each block, write i
 `question=` verbatim, then run its `decline-command=` text EXACTLY and write its line verbatim. This
 overrides "a skipped question runs nothing" above.
 
-Never answer the question yourself, never run an `accept-command=` without "Upload", and never add or
+Never answer the question yourself, never run an `accept-command=` without "Upload now", and never add or
 suggest `--force`, `--since` or `--dry-run`.
 
 If the Beezi tools are still missing afterwards, they appear within about 15 seconds; if not, run

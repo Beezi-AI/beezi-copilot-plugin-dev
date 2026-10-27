@@ -1,12 +1,13 @@
-// The past-sessions offer copy (K7): the summary lines, the question, and the decline and accept lines.
+// The past-sessions offer copy (K7 wording, K7-C layout): the summary lines, the question, and the decline and accept lines.
 import { joinNames, plural } from '../core/text.mjs';
 
 export const SUBAGENT_TEXT = 'subagent names';
+export const SUBAGENT_SHORT = 'subagent names';
 export const SYNC_COMMAND = '/beezi-local-sync';
 
 const AGENT = 'Copilot';
 const TITLE_NOTE = ' (the Copilot CLI uses your first message when a session has no name or summary)';
-const MAX_FOLDERS = 5;
+const MAX_FOLDERS = 3;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const KIND_ITEMS = [
   ['repos', 'folder and repository names'],
@@ -17,36 +18,42 @@ const KIND_ITEMS = [
 
 const dayOf = (d) => `${d.getDate()} ${MONTHS[d.getMonth()]}`;
 
-// "on 3 Oct", "from 12 Aug to 21 Oct", or with both years when the range crosses one.
+// "3 Oct", "12 Aug – 21 Oct", or with both years when the range crosses one.
 function dateRange(firstMs, lastMs) {
   const first = new Date(firstMs);
   const last = new Date(lastMs);
-  if (first.getFullYear() !== last.getFullYear()) return `from ${dayOf(first)} ${first.getFullYear()} to ${dayOf(last)} ${last.getFullYear()}`;
-  if (first.getMonth() === last.getMonth() && first.getDate() === last.getDate()) return `on ${dayOf(first)}`;
-  return `from ${dayOf(first)} to ${dayOf(last)}`;
+  if (first.getFullYear() !== last.getFullYear()) return `${dayOf(first)} ${first.getFullYear()} – ${dayOf(last)} ${last.getFullYear()}`;
+  if (first.getMonth() === last.getMonth() && first.getDate() === last.getDate()) return dayOf(first);
+  return `${dayOf(first)} – ${dayOf(last)}`;
 }
 
-function folderPart(folders) {
-  if (folders.length === 0) return '';
-  const shown = folders.length > MAX_FOLDERS ? [...folders.slice(0, MAX_FOLDERS), `${folders.length - MAX_FOLDERS} more`] : folders;
-  return ` in ${plural(folders.length, 'folder')}: ${joinNames(shown)}`;
+// "  in a, b, c +k more": at most MAX_FOLDERS names.
+function folderLine(folders) {
+  const more = folders.length > MAX_FOLDERS ? ` +${folders.length - MAX_FOLDERS} more` : '';
+  return `  in ${folders.slice(0, MAX_FOLDERS).join(', ')}${more}`;
 }
 
-// → { lines: [L1, L2, L3?, L4?, L5], question }.
+// Hidden items two per line, in K7 order; an odd last item stands alone.
+function hiddenLines(hidden) {
+  const lines = [];
+  for (let i = 0; i < hidden.length; i += 2) lines.push(`    ◆ ${hidden.slice(i, i + 2).join(', ')}`);
+  return lines;
+}
+
+// → { lines: the plain K7-C lines H1 to N1, question }.
 export function offerLines({ count, firstMs, lastMs, folders, kinds, workspace }) {
   const on = (kind) => kinds.indexOf(kind) !== -1;
   const shown = KIND_ITEMS.filter(([kind]) => !on(kind)).map(([, item]) => item);
   const hidden = KIND_ITEMS.filter(([kind]) => on(kind)).map(([, item]) => item);
-  const lines = [
-    `Beezi found ${plural(count, `past ${AGENT} session`)} ${dateRange(firstMs, lastMs)}${folderPart(folders)}.`,
-    'Uploading sends dates, duration, models, tokens, cost, and tool, skill and MCP names for each session.',
-  ];
-  if (shown.length > 0) lines.push(`Sent as they are: ${joinNames(shown)}.`);
-  if (hidden.length > 0) lines.push(`Hidden by your workspace: ${joinNames(hidden)}. Beezi receives made-up names instead.`);
-  lines.push(on('sessions')
-    ? `Session titles, error messages and ${SUBAGENT_TEXT} are not sent.`
-    : `Also sent as written: session titles${TITLE_NOTE}, error messages (up to 1,000 characters) and ${SUBAGENT_TEXT}.`);
-  const question = count === 1 ? `Upload this session to ${workspace}?` : `Upload these ${count} sessions to ${workspace}?`;
+  const folderCount = folders.length > 0 ? `, ${plural(folders.length, 'folder')}` : '';
+  const lines = [`Beezi found ${plural(count, `past ${AGENT} session`)} (${dateRange(firstMs, lastMs)}${folderCount})`];
+  if (folders.length > 0) lines.push(folderLine(folders));
+  lines.push('  Sent', '    ✓ dates, duration, models, tokens, cost', '    ✓ tool, skill and MCP names');
+  if (shown.length > 0) lines.push(`    ✓ ${joinNames(shown)}, as they are`);
+  if (!on('sessions')) lines.push(`    ✓ session titles${TITLE_NOTE}, error messages (up to 1,000 characters) and ${SUBAGENT_TEXT}, as written`);
+  if (hidden.length > 0) lines.push('  Hidden by your workspace — Beezi gets made-up names', ...hiddenLines(hidden));
+  if (on('sessions')) lines.push('  Never sent', `    ✕ session titles, error messages and ${SUBAGENT_SHORT}`);
+  const question = count === 1 ? `Upload this session to ${workspace}?` : `Upload ${count} sessions to ${workspace}?`;
   return { lines, question };
 }
 

@@ -75,7 +75,7 @@ and `/beezi-settings account` shows the name this machine appears as there.
 machine to a workspace (or before you joined it) are past sessions, except one you continue after
 linking, which is tracked live from then on. When there are past sessions,
 Beezi first shows a summary: how many sessions, from which dates and folders, what each one sends and
-which details the workspace hides. It uploads them only after you answer "Upload". "Not now" uploads
+which details the workspace hides. It uploads them only after you answer "Upload now". "Not now" uploads
 nothing and is remembered until the workspace's owner changes the past-sessions setting. The summary
 can come from `/beezi-login`, the terminal setup, the start of a new session, or `/beezi-sync`. A new
 session asks only when the workspace offers past sessions; `/beezi-sync` always asks. Changing a

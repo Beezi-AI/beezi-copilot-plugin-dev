@@ -1,6 +1,7 @@
 // The last steps of the terminal setup: the default account, the past-sessions offer, crash reports and the status line.
 import { usableAccounts } from './account.mjs';
 import { humanLines, lastLine, outputLines, report, reportAll, token } from './output.mjs';
+import { SYNC_COMMAND } from '../../ux/history-offer-lines.mjs';
 
 export const DEFAULT_UNCHANGED = 'The default account is unchanged. /beezi-local-settings account switches it later.';
 export const CRASH_QUESTION = 'How should Beezi crash reports work?';
@@ -9,6 +10,7 @@ const OFFER_OPEN = /^<offer account="[^"]*" tenant="([^"]*)">$/;
 const OFFER_CLOSE = '</offer>';
 const QUESTION = 'question=';
 const OFFER_TOKEN = /^accept-command=.* --offer ([0-9a-f]+)(?: |$)/;
+export const UPLOAD_OPTIONS = [{ label: 'Upload now' }, { label: 'Not now', description: `run ${SYNC_COMMAND} any time` }];
 const CRASH_OPTIONS = [
   { label: 'Correlate (recommended)', description: 'Crash reports with an installation ID, so support can find yours', mode: 'correlate' },
   { label: 'On', description: 'Crash reports without an installation ID', mode: 'on' },
@@ -35,7 +37,7 @@ export function parseOffers(text) {
   return { offers, notes: humanLines(outside.join('\n')) };
 }
 
-// Each offer's summary, then its question, default No; only a yes accepts, and no answer declines.
+// Each offer's summary styled by line shape, then its question as a menu on "Upload now"; only that row accepts, and no answer declines.
 export async function uploadHistory(ctx, key) {
   const scan = await ctx.run('history-offer', ['--via', 'setup', '--account', key]);
   if (scan.code !== 0) {
@@ -45,9 +47,10 @@ export async function uploadHistory(ctx, key) {
   const { offers, notes } = parseOffers(scan.stdout);
   notes.forEach((line) => ctx.print(line));
   for (const offer of offers) {
-    offer.lines.forEach((line) => ctx.print(line));
+    offer.lines.forEach((line) => ctx.printOffer(line));
     const target = ['--account', key, '--tenant', offer.tenant];
-    const answer = (await ctx.ask.confirm(offer.question, false)) === true ? ['accept', ...target, '--offer', offer.token] : ['decline', ...target];
+    const picked = await ctx.ask.choose(offer.question, UPLOAD_OPTIONS, { defaultIndex: 0 });
+    const answer = picked === 0 ? ['accept', ...target, '--offer', offer.token] : ['decline', ...target];
     reportAll(ctx, await ctx.run('history-offer', answer));
   }
 }

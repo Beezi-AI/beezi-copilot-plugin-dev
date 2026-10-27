@@ -24,7 +24,7 @@ function joinedPromptText(rows, root, sessionId) {
     '(1) always ask the first question ("You joined …") first, with the ask_user tool, even with 4 or fewer J lines, and add the choice "Later — ask me again in my next session", which runs nothing; on "Choose repos", ask for each new workspace "Which repos and folders should also send analytics to <name>?" (worded as in that skill) with the J lines as numbered choices ending in "None of these" ("None of these", alone or with other choices, wins: run no J-command for that question, though it still counts as an answer), and for each picked one run its `joined pick` J-command with that workspace\'s tenant id;',
     '(2) leave out the "Add … to all" choice when every J line ends in now=pending or now=none;',
     '(3) a dismissed question runs nothing; it is asked again next session;',
-    '(4) stop after that part: run neither routes nor sync.mjs; these answers upload nothing, and past sessions for the new workspaces are offered separately through history-offer.mjs with their own "Upload" / "Not now" question.',
+    '(4) stop after that part: run neither routes nor sync.mjs; these answers upload nothing, and past sessions for the new workspaces are offered separately through history-offer.mjs with their own "Upload now" / "Not now" question.',
     sessionId == null ? null : folderRecheck(sessionId, root),
     'Then continue with the user\'s request.',
   ].filter((part) => part != null).join(' ');
@@ -57,8 +57,8 @@ function historyOfferText(rows, root, sessionId) {
   return [
     `Beezi: past sessions may be ready to upload. Run EXACTLY ${commands}.`,
     'If it prints offers=0, say nothing about this.',
-    'Otherwise, for each <offer> block in order: write its lines before question= verbatim, then ask with the ask_user tool the question= text with the choices "Upload" and "Not now".',
-    'On "Upload" run that block\'s accept-command= text EXACTLY and show its first line.',
+    'Otherwise, for each <offer> block in order: write its lines before question= verbatim inside one plain fenced code block (```, no language), keeping every leading space and line break, then ask with the ask_user tool the question= text with the choices "Upload now" and "Not now".',
+    'On "Upload now" run that block\'s accept-command= text EXACTLY and show its first line.',
     'On any other answer, a dismissed question or no answer, run its decline-command= text EXACTLY and show nothing from it.',
     'Never answer the question yourself. Then continue with the user\'s request.',
   ].join(' ');

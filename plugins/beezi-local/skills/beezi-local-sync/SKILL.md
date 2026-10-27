@@ -1,6 +1,6 @@
 ---
 name: beezi-local-sync
-description: Show what uploading past Copilot CLI and VS Code Agent Host sessions to Beezi analytics sends, and upload them after the user says Upload, skipping what Beezi already has. Safe to run any number of times. Use when the user asks to sync or re-upload their Copilot history to Beezi, or when their Beezi analytics miss older sessions.
+description: Show what uploading past Copilot CLI and VS Code Agent Host sessions to Beezi analytics sends, and upload them after the user says Upload now, skipping what Beezi already has. Safe to run any number of times. Use when the user asks to sync or re-upload their Copilot history to Beezi, or when their Beezi analytics miss older sessions.
 argument-hint: "[account email | upload]"
 allowed-tools: shell(node:*), ask_user
 ---
@@ -160,15 +160,15 @@ line outside the blocks says a workspace could not be checked, or "this machine 
 (→ /beezi-local-login): write it verbatim. A `✓` line outside the blocks says an upload accepted earlier is
 still running for a workspace: write it verbatim. `offers=0` with no `✗` or `✓` line means there is
 nothing to upload now: say so in one sentence. For each block, in order:
-- write its lines before `question=` verbatim;
-- ask the `question=` text with `ask_user`, with the choices "Upload" and "Not now";
-- "Upload" → run its `accept-command=` text EXACTLY and write its line verbatim;
+- write its lines before `question=` verbatim inside one plain fenced code block (```, no language), keeping every leading space and line break;
+- ask the `question=` text with `ask_user`, with the choices "Upload now" and "Not now";
+- "Upload now" → run its `accept-command=` text EXACTLY and write its line verbatim;
 - anything else, a dismissed question or no answer → run its `decline-command=` text EXACTLY and write
   its line verbatim.
 
 In `mode=argument-only`, after each block's lines before `question=`, write its `question=` text
-followed by the numbered list `1. Upload` and `2. Not now`; then stop and tell the user to run
+followed by the numbered list `1. Upload now` and `2. Not now`; then stop and tell the user to run
 `/beezi-local-sync upload` to upload them. Run no `accept-command=` or `decline-command=` then.
 
-Never answer the question yourself and never run an `accept-command=` without "Upload". An upload
+Never answer the question yourself and never run an `accept-command=` without "Upload now". An upload
 runs in the background, and a later Copilot session shows its result.
