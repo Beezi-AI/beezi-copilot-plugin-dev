@@ -1,5 +1,7 @@
 import { getAuthentication as _getAuthentication } from './token.mjs';
 import { listAccounts as _listAccounts, getDefaultKey as _getDefaultKey, AccountStatus } from '../accounts/index-store.mjs';
+import { BEEZI_ENV } from '../config/paths.mjs';
+import { LEGACY_PRODUCTION_API_ORIGIN, PRODUCTION_API_ORIGIN } from '../config/api.mjs';
 
 function toSession(row, token) {
   return {
@@ -19,7 +21,9 @@ function toSession(row, token) {
 // `session` carrying the API-origin pin of the credential `auth` was read from. Every session built from an
 // authentication result goes through here; a credential without api_origin (an older login) adds no pin.
 export function pinnedTo(session, auth) {
-  return auth == null || auth.apiOrigin == null ? session : { ...session, apiOrigin: auth.apiOrigin };
+  if (auth == null || auth.apiOrigin == null) return session;
+  const legacy = BEEZI_ENV === '' && auth.apiOrigin === LEGACY_PRODUCTION_API_ORIGIN;
+  return { ...session, apiOrigin: legacy ? PRODUCTION_API_ORIGIN : auth.apiOrigin };
 }
 
 // One credential read for `session` (a row mapped by toSession): the session with its token, or null when it has none.

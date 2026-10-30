@@ -3,6 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { friendlyMessage } from '../../core/errors.mjs';
+import { copilotAuthEnv } from '../../sources/cli/copilot-identity.mjs';
 import { finaleLines } from '../../ux/setup/finale.mjs';
 import { canReadKeys, colorEnabled, createStyle, formatLine, paint } from '../../ux/setup/style.mjs';
 import { createPrompt, openTerminal } from './prompt.mjs';
@@ -13,6 +14,8 @@ import { runSetup } from './wizard.mjs';
 export const SESSION_KEYS = ['COPILOT_AGENT_SESSION_ID'];
 export const NO_TERMINAL = '✗ Beezi setup needs a terminal. Run /beezi-dev-login in Copilot instead.';
 export const STOPPED = 'Setup stopped. Run the installer again, or /beezi-dev-login in Copilot, to finish.';
+// Copilot keeps these out of its hooks' environment (GH_TOKEN still reaches them), so the steps run without them too.
+export const HIDDEN_TOKEN_VARS = ['COPILOT_GITHUB_TOKEN', 'GITHUB_TOKEN'];
 const AGENT = 'GitHub Copilot';
 const SHOW_CURSOR = '\x1b[?25h';
 
@@ -38,6 +41,18 @@ export function realDeps(root) {
     onInterrupt: (handler) => { process.on('SIGINT', handler); },
     exit: (code) => { process.exit(code); },
   };
+}
+
+export function hiddenTokenLine(name) {
+  return `⚠ Beezi: your shell sets ${name}, but Copilot hides it from plugins, so Beezi can’t tell which GitHub `
+    + 'account that token belongs to. To fix that, export it as GH_TOKEN instead.';
+}
+
+// The shell's env without the token vars Copilot hides from its hooks.
+function hookVisibleEnv(env) {
+  const out = Object.assign({}, env);
+  HIDDEN_TOKEN_VARS.forEach((name) => { delete out[name]; });
+  return out;
 }
 
 // Runs the wizard on the terminal and resolves its exit code.
@@ -72,7 +87,7 @@ export function setupMain(deps) {
     const interactive = canReadKeys({ input, output, env: deps.env });
     ask = deps.createPrompt({ input, output, style, interactive, onInterrupt: stop });
     run = deps.createRunner({
-      root: deps.root, cwd, env: deps.env, sessionKeys: SESSION_KEYS, paint: format,
+      root: deps.root, cwd, env: hookVisibleEnv(deps.env), sessionKeys: SESSION_KEYS, paint: format,
       output, activity: output.isTTY === true && deps.env.TERM !== 'dumb',
     });
     const progress = (label) => { run.setLabel(label); };
@@ -90,6 +105,8 @@ export function setupMain(deps) {
     .then((code) => {
       ask.close();
       if (code === 0) {
+        const envToken = copilotAuthEnv(deps.env).envToken;
+        if (HIDDEN_TOKEN_VARS.indexOf(envToken) !== -1) print(hiddenTokenLine(envToken));
         finaleLines({ agent: AGENT, style, columns: output.columns || 80, random: deps.random })
           .forEach((line) => { output.write(`${line}\n`); });
       }

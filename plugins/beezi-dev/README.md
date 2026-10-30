@@ -138,7 +138,10 @@ terminal: the `beezi-login` steps (minus the current session's folder rule; ther
 reports and the status line. It runs `preflight.mjs`, `accounts.mjs`, `login.mjs`, `workspace.mjs`,
 `billing-capture.mjs`, `backfill.mjs`, `settings.mjs`, `telemetry.mjs` and `statusline-install.mjs` as child
 processes. Where no browser can open (SSH, a Codespace, a dev container, Linux with no display) it signs in
-with the paste-back flow: `login.mjs --no-browser`, then `--complete` with the pasted address.
+with the paste-back flow: `login.mjs --no-browser`, then `--complete` with the pasted address. The child
+processes run without `COPILOT_GITHUB_TOKEN` and `GITHUB_TOKEN`, which Copilot keeps out of its hooks, so setup
+records the same GitHub account its sessions report; when one of them is the token Copilot uses, setup warns
+and suggests `GH_TOKEN`, which hooks do see.
 
 Skill names are prefixed `beezi-` because Copilot already has `/login`, `/logout`, `/settings`,
 `/usage` and `/statusline`. Skills name MCP tools bare (`get_analytics_instructions`) and never with a
