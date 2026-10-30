@@ -1,9 +1,15 @@
 # Beezi plugin release notes
 
-## 0.1.95 (2026-10-29) — Large sessions keep tracking
+## 0.1.96 (2026-10-29) — Large sessions keep tracking
 
 ### Fixed
 - **Large sessions keep tracking** — Copilot CLI and VS Code sessions over 64 MB are tracked live and uploaded instead of being skipped.
+
+## 0.1.95 (2026-10-26) — Terminal setup sees what your sessions see
+
+### Fixed
+- **Uploads reach Beezi again** — the plugin uses Beezi's new address, `https://api.beezi.ai`, and existing sign-ins keep working without a new `/beezi-local-login`.
+- **One GitHub account per machine** — a `COPILOT_GITHUB_TOKEN` or `GITHUB_TOKEN` set in your shell no longer reaches terminal setup, the same way Copilot hides them from plugins, so setup no longer records a different GitHub account than your sessions report. Setup prints a warning when Copilot uses such a token, and suggests `GH_TOKEN`, which Beezi can see.
 
 ## 0.1.94 (2026-10-22) — Pick several workspaces, and no silent drops
 

@@ -1,6 +1,6 @@
 // The durable per-account coverage record: the highest parent line this machine confirmed delivered, per session.
 import path from 'path';
-import { apiBase } from '../config/api.mjs';
+import { apiBase, storedApiBase } from '../config/api.mjs';
 import { accountDir, tenantTag, BEEZI_ENV } from '../config/paths.mjs';
 import { readJson, writeJsonSecure } from '../platform/fs-store.mjs';
 
@@ -38,7 +38,7 @@ function bindingMatches(record, binding) {
   if (record.version !== COVERAGE_FILE_VERSION) return false;
   if (record.identity !== (binding.identity == null ? null : binding.identity)) return false;
   if (record.environment !== (binding.environment == null ? 'prod' : binding.environment)) return false;
-  if (record.apiBase !== (binding.apiBase == null ? null : binding.apiBase)) return false;
+  if (storedApiBase(record.apiBase) !== (binding.apiBase == null ? null : binding.apiBase)) return false;
   if (record.tenantId !== (binding.tenantId == null ? null : binding.tenantId)) return false;
   return !!record.sessions && typeof record.sessions === 'object' && !Array.isArray(record.sessions);
 }
