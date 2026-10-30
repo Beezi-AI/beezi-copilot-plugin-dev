@@ -7,7 +7,6 @@ import { routeForDir } from '../workspace/routing.mjs';
 import { readSessionWorkspace } from '../workspace/session-routes.mjs';
 import { newFoldersOf, resolveTargets } from '../workspace/targets.mjs';
 import { ACTIVE_SESSION_WINDOW_MS } from './scan-limits.mjs';
-import { MAX_TRANSCRIPT_BYTES } from '../contract/report-limits.mjs';
 
 // The re-pick pass lists places with sessions from the last 30 days, as Codex's upload window does.
 const REVIEW_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
@@ -90,7 +89,6 @@ export function waitingRoutes(row, entries, ctx, {
     if (entry == null || entry.sessionId == null) continue;
     if (liveSessionId != null && entry.sessionId === liveSessionId) continue;
     if (nowMs - entry.mtimeMs < ACTIVE_SESSION_WINDOW_MS) continue;
-    if (entry.size > MAX_TRANSCRIPT_BYTES) continue;
     if (ledgers.some((ledger) => isImported(ledger, entry.sessionId))) continue;
     let cwd = null;
     let cwdRead = false;
@@ -167,7 +165,6 @@ export function planReviewPlaces(row, entries, ctx, {
     if (liveSessionId != null && entry.sessionId === liveSessionId) continue;
     if (nowMs - entry.mtimeMs < ACTIVE_SESSION_WINDOW_MS) continue;
     if (nowMs - entry.mtimeMs > REVIEW_WINDOW_MS) continue;
-    if (entry.size > MAX_TRANSCRIPT_BYTES) continue;
     const state = safeReadState(readState, entry.sessionId);
     const dir = state != null && typeof state.cwd === 'string' && state.cwd !== '' ? state.cwd : readCwd(entry.transcriptPath);
     if (dir == null) continue;

@@ -11,7 +11,6 @@ import { checkpointLineFor } from '../state/coverage-record.mjs';
 import { decideReplay, heldLineOf, ReplayDecision, DeferReason } from '../delivery/coverage.mjs';
 import { linkedAtMs, TrackingMode } from '../state/tracking.mjs';
 import { ACTIVE_SESSION_WINDOW_MS } from './scan-limits.mjs';
-import { MAX_TRANSCRIPT_BYTES } from '../contract/report-limits.mjs';
 import { AUDIT_TIMEOUT_MS } from '../contract/history.mjs';
 
 // The session this command runs inside; a null answer is fine because the active-window skip covers it.
@@ -92,17 +91,16 @@ function vscodeLiveSince(sessionId, cutoffMs) {
   return isFinite(at) && at > cutoffMs;
 }
 
-const emptyCounts = () => ({ live: 0, routedElsewhere: 0, routeDeferred: 0, active: 0, liveTracked: 0, excluded: 0, alreadyImported: 0, oversize: 0 });
+const emptyCounts = () => ({ live: 0, routedElsewhere: 0, routeDeferred: 0, active: 0, liveTracked: 0, excluded: 0, alreadyImported: 0 });
 
 // Sessions skipped for being open or just touched: the history worker waits for the ones older than its request.
 function noteRecent(recent, entry) {
   if (typeof entry.transcriptPath === 'string') recent.push({ sessionId: entry.sessionId, path: entry.transcriptPath });
 }
 
-// → { candidates, counts, settledIds, recent }; `facts.isLiveVscode(id)` and `facts.localCursor(entry)` are asked lazily, in filter order.
+// → { candidates, counts, recent }; `facts.isLiveVscode(id)` and `facts.localCursor(entry)` are asked lazily, in filter order.
 export function filterCandidates(entries, facts) {
   const counts = emptyCounts();
-  const settledIds = [];
   const candidates = [];
   const recent = [];
   const { liveId, sessionRoutes, tenantId, linkCutoffMs, activeCutoffMs, syncMode, liveMode, excludedSessionIds } = facts;
@@ -134,13 +132,12 @@ export function filterCandidates(entries, facts) {
     if (excludedSessionIds != null && excludedSessionIds.has(id)) { counts.excluded += 1; continue; }
     if (!syncMode && !facts.force && isImported(facts.ledger, id)) { counts.alreadyImported += 1; continue; }
     if (facts.sinceMs != null && entry.mtimeMs < facts.sinceMs) continue;
-    if (entry.size > MAX_TRANSCRIPT_BYTES) { counts.oversize += 1; settledIds.push(id); continue; }
     candidates.push(entry);
   }
-  return { candidates, counts, settledIds, recent };
+  return { candidates, counts, recent };
 }
 
-// The candidates stage: list, skip the live, active, routed-away, excluded, imported and oversize sessions, count each.
+// The candidates stage: list, skip the live, active, routed-away, excluded and imported sessions, count each.
 export async function selectCandidates(run) {
   const { result, options, syncMode, multi, who, tracking, trackingValid } = run;
   const only = options.onlySessionIds == null ? null : new Set(options.onlySessionIds);
@@ -170,7 +167,6 @@ export async function selectCandidates(run) {
     localCursor: localCursorOf,
   });
   for (const name of Object.keys(picked.counts)) result[name] += picked.counts[name];
-  result.settledIds.push(...picked.settledIds);
   result.recent.push(...picked.recent);
   return picked.candidates;
 }

@@ -1,7 +1,7 @@
 // When a history run may seal the one-time pull.
 import { SYNC_MODE } from '../contract/history.mjs';
 
-// Seal only when a re-run could not improve the outcome; per-item errors and unreadable-twice or oversize files never block it, or the seal would deadlock.
+// Seal only when a re-run could not improve the outcome; per-item errors and unreadable-twice files never block it, or the seal would deadlock.
 export function shouldFinalize(result, options = {}) {
   if (!result.ok) return false;
   // /beezi-dev-sync is repeatable by definition; sealing the one-time pull from it would lock the user out of the command they just ran.

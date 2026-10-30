@@ -168,7 +168,7 @@ file that changed it does one of three things:
   When a workspace still owes its past sessions, the watcher starts the history worker for it (see
   [Accounts and workspace routing](#accounts-and-workspace-routing)) instead of uploading them itself.
 
-Files over 64 MB are skipped and logged once. Once every 6 hours the elected watcher also runs the
+Once every 6 hours the elected watcher also runs the
 housekeeping that `SessionStart` runs (prune, billing reconcile, account check-in, queue flush), so
 those still happen where `SessionStart` never fires. It writes its notes to
 `<data root>/logs/watcher.log` and never to stdout or stderr, because stdout belongs to JSON-RPC.

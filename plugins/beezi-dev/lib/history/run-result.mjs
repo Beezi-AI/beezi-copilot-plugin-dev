@@ -10,7 +10,6 @@ export function newResult() {
     active: 0,
     liveTracked: 0,
     alreadyImported: 0,
-    oversize: 0,
     routedElsewhere: 0,
     routeDeferred: 0,
     // One-workspace runs only: sessions a matched rule excludes from tracking (`excludedSessionIds`).
@@ -55,7 +54,7 @@ export function newResult() {
     upgradeAdvised: false,
     finalized: false,
     lastError: null,
-    // Ids with a final answer for now (accepted, partial, rejected, empty, noRemote, oversize); deferred, failed and unreadable are excluded.
+    // Ids with a final answer for now (accepted, partial, rejected, empty, noRemote); deferred, failed and unreadable are excluded.
     settledIds: [],
     // Sessions skipped as live or active, as { sessionId, path }: the history worker waits on the ones older than its request.
     recent: [],

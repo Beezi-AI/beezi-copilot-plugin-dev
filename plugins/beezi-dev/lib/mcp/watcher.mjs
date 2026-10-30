@@ -11,7 +11,7 @@ import { createRouteContext } from '../workspace/route-key.mjs';
 import { recordIssue } from '../telemetry/recorder.mjs';
 import { DIAGNOSTIC_CODES, DIAGNOSTIC_SOURCES } from '../contract/diagnostic-codes.mjs';
 import { isWatcherEnabled } from '../config/flags.mjs';
-import { ELECTION_NAME, ELECTION_LEASE_MS, loadWatermark, saveWatermark, storeObservation, keptField, trimWatermark } from '../state/watcher-record.mjs';
+import { ELECTION_NAME, ELECTION_LEASE_MS, loadWatermark, saveWatermark, trimWatermark } from '../state/watcher-record.mjs';
 import { planPass, applyHookStamps } from './watch-planner.mjs';
 import { recipientsFor, liveRecipients } from './watch-recipients.mjs';
 import { runDuePath, runFreshPath, runHistoryPath, failStep, messageOf } from './watch-paths.mjs';
@@ -106,7 +106,7 @@ function finishPass(pass, reason) {
   return summary;
 }
 
-// Plans the pass and records what planning learned: hook stamps and newly oversize sessions.
+// Plans the pass and records what planning learned: hook stamps.
 function planAndStamp(pass, live) {
   const { record, nowMs, recipients, routeCtx } = pass;
   const plan = planPass({
@@ -116,11 +116,6 @@ function planAndStamp(pass, live) {
   pass.summary.cooling = plan.cooling;
   pass.summary.hookActive = plan.hookActive;
   if (applyHookStamps(record, plan.hookStamps)) pass.dirty = true;
-  for (const entry of plan.oversizeNew) {
-    pass.ctx.say(`watcher: ${entry.sessionId} events.jsonl over 64 MB — not captured by the watcher`);
-    storeObservation(record, entry, { at: nowMs, cursorAfter: keptField(record.sessions[entry.sessionId], 'cursorAfter'), oversizeAt: nowMs });
-    pass.dirty = true;
-  }
   return plan;
 }
 

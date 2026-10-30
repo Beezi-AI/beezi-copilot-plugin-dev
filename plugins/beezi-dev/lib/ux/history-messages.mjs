@@ -71,7 +71,6 @@ function notUploaded(result) {
     [result.noRemote, NO_REMOTE],
     [result.emitFailed, 'failed while being prepared — not uploaded.'],
     [result.unreadable, 'could not be read — not uploaded.'],
-    [result.oversize, 'were too large to read (over 64 MB) — not uploaded.'],
   ];
 }
 
@@ -292,8 +291,8 @@ export function syncOutcome(result) {
   const stop = syncStop(result);
   if (stop != null) return stop;
   if (result.scanned === 0) return ok('✓ Beezi: no Copilot sessions found on this machine.');
-  // Active and oversize sessions are skipped before they count as candidates; they are reported below, never "already uploaded".
-  if (result.candidates === 0 && result.deferred === 0 && result.active === 0 && result.oversize === 0) {
+  // Active sessions are skipped before they count as candidates; they are reported below, never "already uploaded".
+  if (result.candidates === 0 && result.deferred === 0 && result.active === 0) {
     return ok('✓ Beezi: everything is already uploaded.');
   }
   if (result.reportsFailed > 0 && result.sessionsImported === 0) {

@@ -239,6 +239,12 @@ function noteUnreadable(run, sessionId) {
   run.unreadableDirty = true;
 }
 
+// The events the engine already read from this entry's own file; undefined lets readSessionFacts read it.
+function engineEventsOf(checkpoint, entry) {
+  const read = checkpoint == null ? null : checkpoint.transcriptRead;
+  return read != null && read.path === entry.transcriptPath ? read.events : undefined;
+}
+
 // One candidate through its engine → the group to upload, or null when it settled, deferred or failed.
 async function replayOne(run, entry, startCursor) {
   const { result } = run;
@@ -267,7 +273,7 @@ async function replayOne(run, entry, startCursor) {
   if (verdict.upload == null) return null;
 
   // A VS Code chat file has no CLI event stream: its checkpoint stamped the reports and it has no timeline.
-  const facts = entry.kind === 'vscode' ? null : await readSessionFacts(entry);
+  const facts = entry.kind === 'vscode' ? null : await readSessionFacts(entry, engineEventsOf(checkpoint, entry));
   await stampHistoryReports(reports, entry, run.billingSnapshot, facts);
   const timeline = buildSessionTimeline(run, entry, facts);
   const usageSource = reports.map((r) => r.usage_source).find((s) => s === 'per_call' || s === 'session_totals');

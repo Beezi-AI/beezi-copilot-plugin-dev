@@ -76,8 +76,58 @@ function applyPatch(root, entry) {
   return root;
 }
 
-// The session's full state rebuilt from the file text, or null. A torn final line is dropped; a bad earlier line is fatal,
-// since later index splices would land on the wrong items. The older single-object .json form (`isWholeJson`) is its own snapshot.
+// A line's JSON value, or undefined when it is unreadable (null) or does not parse.
+function parsedLine(text) {
+  if (text == null) return undefined;
+  try { return JSON.parse(text); } catch { return undefined; }
+}
+
+// Replays a .jsonl session line by line: line(text) returns true once the replay is fatal; result() gives the state or null.
+// A line that does not parse is fatal only when a later non-blank line follows, so a torn final line is dropped; a bad
+// earlier line is fatal, since later index splices would land on the wrong items.
+export function sessionReplayer() {
+  let root = null;
+  let torn = false;
+  let fatal = false;
+  const fail = () => {
+    fatal = true;
+    return true;
+  };
+  return {
+    line(text) {
+      if (text != null && text.trim() === '') return false;
+      if (torn) return fail();
+      const entry = parsedLine(text);
+      if (entry === undefined) {
+        torn = true;
+        return false;
+      }
+      if (!isPlain(entry)) return fail();
+      if (root == null) {
+        if (entry.kind !== 0 || !isPlain(entry.v)) return fail();
+        root = entry.v;
+        return false;
+      }
+      root = applyPatch(root, entry);
+      return false;
+    },
+    result() {
+      return !fatal && isPlain(root) && Array.isArray(root.requests) ? root : null;
+    },
+  };
+}
+
+// The session's full state rebuilt from lines pulled with next() until it gives undefined, or null; see sessionReplayer.
+export function replaySessionLines(next) {
+  const replay = sessionReplayer();
+  for (let text = next(); text !== undefined; text = next()) {
+    if (replay.line(text)) break;
+  }
+  return replay.result();
+}
+
+// The session's full state rebuilt from the file text, or null; see sessionReplayer.
+// The older single-object .json form (`isWholeJson`) is its own snapshot.
 export function replaySessionText(text, isWholeJson) {
   try {
     if (isWholeJson) {
@@ -85,25 +135,8 @@ export function replaySessionText(text, isWholeJson) {
       return isPlain(whole) && Array.isArray(whole.requests) ? whole : null;
     }
     const lines = text.split('\n');
-    let last = lines.length - 1;
-    while (last >= 0 && lines[last].trim() === '') last--;
-    let root = null;
-    for (let n = 0; n <= last; n++) {
-      if (lines[n].trim() === '') continue;
-      let entry;
-      try { entry = JSON.parse(lines[n]); } catch {
-        if (n === last) break;
-        return null;
-      }
-      if (!isPlain(entry)) return null;
-      if (root == null) {
-        if (entry.kind !== 0 || !isPlain(entry.v)) return null;
-        root = entry.v;
-        continue;
-      }
-      root = applyPatch(root, entry);
-    }
-    return isPlain(root) && Array.isArray(root.requests) ? root : null;
+    let n = 0;
+    return replaySessionLines(() => lines[n++]);
   } catch {
     return null;
   }

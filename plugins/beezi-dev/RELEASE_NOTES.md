@@ -1,5 +1,10 @@
 # Beezi plugin release notes
 
+## 0.1.95 (2026-10-29) — Large sessions keep tracking
+
+### Fixed
+- **Large sessions keep tracking** — Copilot CLI and VS Code sessions over 64 MB are tracked live and uploaded instead of being skipped.
+
 ## 0.1.94 (2026-10-22) — Pick several workspaces, and no silent drops
 
 ### Improved
