@@ -16,7 +16,6 @@ import { clearTrackingState } from '../state/tracking.mjs';
 import { getAuthentication as _getAuthentication, INTERACTIVE_REFRESH_WAIT_MS } from '../auth/token.mjs';
 import { AUTH_STATES } from '../contract/auth-states.mjs';
 import { UserError } from '../core/errors.mjs';
-import { anonymizationScope } from '../core/anon-target.mjs';
 import { checkInteractive as _checkInteractive } from '../host/mode-guard.mjs';
 import { forgetAccountInSessions } from '../workspace/session-routes.mjs';
 
@@ -62,8 +61,7 @@ async function logoutAccounts(deps, options) {
   if (keys.includes(index.default) && remaining.length && !next) throw new UserError('Choose the remaining analytics default with --next-default <key|email|number> before logging out.');
   const lines = [];
   for (const account of keys) {
-    const row = index.accounts.find(a => a.key === account);
-    lines.push(`${describeAccount(row)}:`, ...await logoutOne(row, deps));
+    lines.push(`${describeAccount(index.accounts.find(a => a.key === account))}:`, ...await logoutOne(account, deps));
     if (account === index.default && next) await setDefault(next, deps);
     // Credentials are already tombstoned; the row goes, then the directory, then the sessions forget the account.
     await removeAccount(account, deps);
@@ -77,8 +75,7 @@ async function logoutAccounts(deps, options) {
   return lines;
 }
 
-async function logoutOne(row, deps) {
-  const account = row.key;
+async function logoutOne(account, deps) {
   const getAuthentication = deps.getAuthentication == null ? _getAuthentication : deps.getAuthentication;
 
   const before = await readCredentials(deps, { account }).catch(() => null);
@@ -87,7 +84,7 @@ async function logoutOne(row, deps) {
   // be renewed still logs out locally, it just cannot prove the server-side unlink.
   const auth = await getAuthentication(deps, { account, waitMs: INTERACTIVE_REFRESH_WAIT_MS }).catch(() => null);
   const storedClientId = before && before.credentials && before.credentials.client_id;
-  const unlinkSession = (a) => pinnedTo({ key: account, token: a.accessToken, clientId: a.clientId || storedClientId, ...anonymizationScope(row) }, a);
+  const unlinkSession = (a) => pinnedTo({ key: account, token: a.accessToken, clientId: a.clientId || storedClientId }, a);
   const token = auth != null && auth.authState === AUTH_STATES.READY ? auth.accessToken : null;
   let server = token ? await unlinkOnServer(unlinkSession(auth), deps) : { unlinked: false, httpStatus: null };
 

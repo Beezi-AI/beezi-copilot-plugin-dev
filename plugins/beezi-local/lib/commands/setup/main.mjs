@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import { friendlyMessage } from '../../core/errors.mjs';
 import { finaleLines } from '../../ux/setup/finale.mjs';
-import { canReadKeys, colorEnabled, createStyle, formatLine, formatOfferLine, paint } from '../../ux/setup/style.mjs';
+import { canReadKeys, colorEnabled, createStyle, formatLine, paint } from '../../ux/setup/style.mjs';
 import { createPrompt, openTerminal } from './prompt.mjs';
 import { createRunner } from './runner.mjs';
 import { runSetup } from './wizard.mjs';
@@ -47,7 +47,6 @@ export function setupMain(deps) {
   // Wrapped to the width on a terminal; a log keeps each line whole.
   const format = (line) => (output.isTTY ? formatLine(style, line, output.columns || 80) : paint(style, line));
   const print = (line) => { output.write(`${format(line)}\n`); };
-  const printOffer = (line) => { output.write(`${formatOfferLine(style, line, output.isTTY ? output.columns || 80 : null)}\n`); };
   const input = deps.openTerminal();
   if (input === null) {
     print(NO_TERMINAL);
@@ -77,7 +76,7 @@ export function setupMain(deps) {
       output, activity: output.isTTY === true && deps.env.TERM !== 'dumb',
     });
     const progress = (label) => { run.setLabel(label); };
-    done = deps.runSetup({ run, ask, print, printOffer, progress, env: deps.env, platform: deps.platform });
+    done = deps.runSetup({ run, ask, print, progress, env: deps.env, platform: deps.platform });
   } catch (error) {
     if (ask !== null) ask.close();
     print(`✗ ${friendlyMessage(error)}`);

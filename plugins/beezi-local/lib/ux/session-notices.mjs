@@ -1,13 +1,12 @@
 // The SessionStart notice texts and the account labels that prefix them.
 import { hasBeenAsked, hasCorrelationBeenAsked, isTelemetryGranted } from '../telemetry/consent.mjs';
-import { TrackingMode } from '../state/tracking.mjs';
+import { shouldBackfill, TrackingMode } from '../state/tracking.mjs';
 import { isMultiTenant } from '../workspace/tenants.mjs';
 
 export const AUTH_TEMPORARILY_UNAVAILABLE_NOTICE = 'Beezi: authentication is temporarily unavailable.';
 export const LINK_REJECTED_NOTICE = '⚠ Beezi: this machine’s link was rejected — analytics are NOT being tracked. Run /beezi-local-login to authorize it again.';
 export const PLAN_UNKNOWN_NOTICE = 'Beezi: your Copilot plan is unknown. Tell Beezi in /beezi-local-settings.';
 export const STATUSLINE_DETACHED_NOTICE = 'Beezi: your status line no longer runs Beezi\'s wrapper. Turn it back on with /beezi-local-settings statusline on.';
-export const SYNC_NUDGE = 'Beezi: run /beezi-local-sync any time to upload your past sessions.';
 
 // The consent ask, or null once it was answered or shown. It is not stamped as asked here: it is stamped only by a
 // channel that is known to show it to the user, so the user keeps being asked until they answer.
@@ -41,15 +40,15 @@ export function accountLabel(session, several) {
   return several ? `Beezi (${(isMultiTenant(session) ? null : session.tenantName) || session.email || session.key})` : 'Beezi';
 }
 
-// Tells an Audit or dark workspace what it is, pointing an Audit one at /beezi-local-sync while its past-sessions offer is open;
-// null for a live workspace (its /beezi-local-sync line is SYNC_NUDGE, ranked below the result notices).
-export function trackingPolicyNotice(tracking, offerOpen) {
+// Tells a dark workspace it is dark, and points at the login flow wherever the one-time history pull has not
+// completed yet (the backfill is the last step of /beezi-local-login); null when there is nothing to say.
+export function trackingPolicyNotice(tracking) {
   const mode = tracking == null || tracking.trackingMode == null ? null : tracking.trackingMode;
   if (mode === TrackingMode.BACKFILL_ONLY) {
-    return offerOpen
-      ? 'Beezi: audit mode — new sessions are not tracked. Run /beezi-local-sync to upload your past sessions, or upgrade your workspace plan to track new sessions.'
+    return shouldBackfill(tracking)
+      ? 'Beezi: audit mode — new sessions are not tracked. Run /beezi-local-login to upload your session history, or upgrade your workspace plan to track new sessions.'
       : 'Beezi: audit mode — new sessions are not tracked. Upgrade your workspace plan to start tracking them.';
   }
   if (mode === TrackingMode.DISABLED) return 'Beezi: analytics are off for this workspace.';
-  return null;
+  return shouldBackfill(tracking) ? 'Beezi: run /beezi-local-login once to include your past sessions.' : null;
 }

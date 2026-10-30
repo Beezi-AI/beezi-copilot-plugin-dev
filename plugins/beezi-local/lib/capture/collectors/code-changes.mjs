@@ -1,5 +1,5 @@
 import path from 'path';
-import { dataOf } from '../../sources/cli/event-types.mjs';
+import { dataOf, isDiff } from '../../sources/cli/event-types.mjs';
 import { canonicalToolName, completionsById, inSegment, parseArgs } from './operations.mjs';
 import { patchText, readPatch } from './apply-patch.mjs';
 
@@ -73,8 +73,8 @@ function telemetryLines(complete) {
 
 function resultDiff(complete) {
   const r = complete == null ? null : dataOf(complete).result;
-  const text = r != null && typeof r.detailedContent === 'string' ? r.detailedContent : null;
-  return text != null && /^@@ /m.test(text) ? text : null;
+  const text = r != null ? r.detailedContent : null;
+  return isDiff(text) ? text : null;
 }
 
 function applyEdit(start, complete, acc) {

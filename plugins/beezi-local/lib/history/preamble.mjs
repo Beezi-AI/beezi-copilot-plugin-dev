@@ -1,4 +1,4 @@
-// The gates before a history run reads any session: account and auth, audit-only workspaces, the queue drain and the sealed-pull check.
+// The gates before a history run reads any session: account and auth, audit-only workspaces, the queue drain and the seal.
 import { INTERACTIVE_REFRESH_WAIT_MS } from '../auth/token.mjs';
 import { pinnedTo } from '../auth/recipients.mjs';
 import { apiBase } from '../config/api.mjs';
@@ -7,7 +7,6 @@ import { AUTH_STATES } from '../contract/auth-states.mjs';
 import { isMultiTenant } from '../workspace/tenants.mjs';
 import { matchesIdentity, isLiveTrackingAllowed, isTenantDark, TrackingMode } from '../state/tracking.mjs';
 import { isComplete } from '../state/ledger.mjs';
-import { withHiddenKinds } from '../core/anon-target.mjs';
 
 const finishAuditOnly = (result) => {
   result.ok = true;
@@ -27,7 +26,7 @@ const finishNotDrained = (result, lastError) => {
   result.lastError = lastError;
 };
 
-// True when the run may go on: run gains key, baseSession, session, tenantId, multi, ledgerTenant, identity, tracking, who and ledger.
+// True when the run may go on: run gains key, session, tenantId, multi, ledgerTenant, identity, tracking, who and ledger.
 export async function runPreamble(run) {
   if (!(await authenticate(run))) return false;
   // Step 3: the repair pass must not become a way around an audit-only workspace.
@@ -70,10 +69,7 @@ async function authenticate(run) {
   run.multi = multi;
   // Each workspace of a multi-workspace account keeps its own ledger and coverage record, so one import never blocks the rest.
   run.ledgerTenant = multi ? tenantId : null;
-  // The kinds the offer showed as hidden lie over the workspace's block, so every request and body of the run hides them;
-  // queued live reports drain under the workspace's own block.
-  run.baseSession = { ...session, tenantId };
-  run.session = withHiddenKinds(run.baseSession, tenantId, options.hiddenKinds || []);
+  run.session = { ...session, tenantId };
   run.identity = run.session.clientId == null ? null : run.session.clientId;
   run.tracking = run.io.readTracking(key);
   run.trackingValid = matchesIdentity(run.tracking, run.identity);
@@ -85,7 +81,7 @@ async function drainQueue(run) {
   const { result } = run;
   let drained = null;
   // A user-run sync retries now: the live flush backoff does not apply.
-  try { drained = await run.io.flushQueue(run.baseSession, { fetchImpl: run.io.fetchImpl, ignoreBackoff: true }); } catch { drained = null; }
+  try { drained = await run.io.flushQueue(run.session, { fetchImpl: run.io.fetchImpl, ignoreBackoff: true }); } catch { drained = null; }
   if (drained == null) {
     finishNotDrained(result, 'queued reports could not be delivered');
     return false;

@@ -10,7 +10,7 @@ import { flushPlans } from '../delivery/queue-flush.mjs';
 import { countPostable } from '../delivery/flush-guard.mjs';
 import { queueDir } from '../config/paths.mjs';
 import { resolveSessionIdentity, SessionIdentityStatus } from '../billing/session-identity.mjs';
-import { dedupeErrors, deliverErrors, errorKey, isSettledPost, parkErrors, scrubbedIf, validError } from '../delivery/session-errors.mjs';
+import { dedupeErrors, deliverErrors, errorKey, isSettledPost, parkErrors, validError } from '../delivery/session-errors.mjs';
 import { accountBinding, loadSessionState, saveSessionState } from '../state/session-state.mjs';
 import { expandTargets } from '../workspace/targets.mjs';
 import { collectErrors } from '../capture/collectors/errors.mjs';
@@ -18,7 +18,6 @@ import { buildTimeline } from '../capture/timeline.mjs';
 import { readTimelineMarkers } from '../state/timeline-markers.mjs';
 import { postSessionTimeline } from '../delivery/timeline-post.mjs';
 import { CONTINUE } from './run-skeleton.mjs';
-import { unionKinds } from '../core/anon-target.mjs';
 
 const ERROR_POST_TIMEOUT_MS = 3000;
 
@@ -100,23 +99,10 @@ async function resolveIdentity(ctx, input) {
   return { status: found.status, key };
 }
 
-// The session's saved last report (the CLI's, else its VS Code chat's), whose marker holds the kinds hidden at capture.
-function capturedReport(state) {
-  if (state == null) return {};
-  if (state.lastReport != null) return state.lastReport;
-  return state.vscode != null && state.vscode.lastReport != null ? state.vscode.lastReport : {};
-}
-
-// True when any target or Ask hold of the run hides sessions now, or did when the saved last report was captured.
-function scrubsErrors(delivery, state) {
-  const captured = capturedReport(state);
-  return delivery.plans.some((p) => p.targets.concat(p.hold).some((t) => unionKinds(captured, p.session, t).indexOf('sessions') !== -1));
-}
-
 // Parks the hook's errors in the session state before the lock is taken, so a busy run still keeps them.
 export function parkHookErrors(ctx) {
   if (ctx.hookErrors.length > 0 && ctx.live) {
-    saveSessionState(ctx.sessionId, (cur) => ({ pendingErrors: parkErrors(cur.pendingErrors, ctx.hookErrors, scrubsErrors(ctx.delivery, cur)) }));
+    saveSessionState(ctx.sessionId, (cur) => ({ pendingErrors: parkErrors(cur.pendingErrors, ctx.hookErrors) }));
   }
 }
 
@@ -186,24 +172,20 @@ export async function settleSessionErrors(ctx, found) {
   if (ctx.options.collectSessionErrors) {
     ctx.out.sessionErrors.push(...fresh);
   } else if (ctx.live) {
-    // Scrubbed before the dedupe, so a parked scrubbed error and its raw fresh twin fold into one.
-    const scrub = scrubsErrors(ctx.delivery, state);
-    const candidates = dedupeErrors(scrubbedIf([...state.pendingErrors, ...fresh], scrub));
+    const candidates = dedupeErrors([...state.pendingErrors, ...fresh]);
     if (candidates.length === 0) return { delivered: new Set(), undelivered: [], changed: false };
     const targets = expandTargets(await ctx.delivery.authorize(), ctx.delivery.workspaceState);
     const { timeLeft, cap } = ctx.clock;
     const { delivered, undelivered } = await deliverErrors(candidates, targets, sessionId, { fetchImpl: ctx.fetchImpl, timeLeft, timeoutMs: () => cap(ERROR_POST_TIMEOUT_MS) });
     const known = new Set(state.pendingErrors.map(errorKey));
-    return { delivered, undelivered, scrub, changed: delivered.size > 0 || undelivered.some((e) => !known.has(errorKey(e))) };
+    return { delivered, undelivered, changed: delivered.size > 0 || undelivered.some((e) => !known.has(errorKey(e))) };
   }
   return { delivered: new Set(), undelivered: [], changed: false };
 }
 
 // The parked-errors patch after a settlement: errors parked meanwhile by a busy run survive; only what was delivered leaves.
 export function parkedErrorsPatch(cur, settled) {
-  if (!settled.changed) return {};
-  const kept = scrubbedIf(cur.pendingErrors, settled.scrub).filter((e) => !settled.delivered.has(errorKey(e)));
-  return { pendingErrors: parkErrors(kept, settled.undelivered, settled.scrub) };
+  return settled.changed ? { pendingErrors: parkErrors(cur.pendingErrors.filter((e) => !settled.delivered.has(errorKey(e))), settled.undelivered) } : {};
 }
 
 // The whole-session timeline, re-posted only when its content changed; → the hash to remember, or null.

@@ -10,7 +10,7 @@ import { UserError } from '../../core/errors.mjs';
 import { UNDO_CHANGED, UNDO_MISSING, UNDO_NOTHING, undoneLine } from '../../ux/workspace-lines.mjs';
 import { machineLine } from '../../ux/machine-lines.mjs';
 import { resolveSession } from '../../workspace/session-routes.mjs';
-import { USAGE, mayPersist, parseSessionFlag, resolveAccount } from './args.mjs';
+import { USAGE, afterRuleWrite, mayPersist, parseSessionFlag, resolveAccount } from './args.mjs';
 import { bindOpenSessions, checkIn, rerouteGone } from './rules.mjs';
 
 // A session here with no rule follows the new New folders now: its held reports go out and workspaces it newly sends to check in.
@@ -27,7 +27,7 @@ function sameRule(a, b) {
 }
 
 // restoreRouting decides missing, revoked and changed under the index lock; an unreadable index throws before the record is cleared.
-export async function undo(argv) {
+export async function undo(argv, cx = { deferUpload: false }) {
   const { session, rest } = parseSessionFlag(argv);
   if (rest.length !== 0) throw new UserError(USAGE);
   const last = readUndo();
@@ -58,5 +58,6 @@ export async function undo(argv) {
   if (row != null && JSON.stringify(last.before.newFolders) !== JSON.stringify(last.after.newFolders)) {
     await followNewFolders(fresh, current, resolveTargets(row, current.state));
   }
+  await afterRuleWrite(fresh.key, cx, cx.deps);
   console.log(machineLine([['undone', 1]]));
 }

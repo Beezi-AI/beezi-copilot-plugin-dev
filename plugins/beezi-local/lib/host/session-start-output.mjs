@@ -1,7 +1,7 @@
 // The SessionStart relay line: which notice is relayed to the user, and the quoted instruction that carries it.
 
-// Most important first; `restart`, `privacy`, `joined`, `history`, `sync` (the /beezi-local-sync nudge), `health` and `targets` (sessions held for a choice) extend auth > update > billing > policy > consent > statusline; `not-tracked` (a rule the user set) is the lowest.
-export const RELAY_ORDER = ['auth', 'restart', 'update', 'billing', 'policy', 'consent', 'privacy', 'joined', 'history', 'sync', 'statusline', 'health', 'targets', 'not-tracked'];
+// Most important first; `restart`, `joined`, `history`, `health` and `targets` (sessions held for a choice) extend auth > update > billing > policy > consent > statusline; `not-tracked` (a rule the user set) is the lowest.
+export const RELAY_ORDER = ['auth', 'restart', 'update', 'billing', 'policy', 'consent', 'joined', 'history', 'statusline', 'health', 'targets', 'not-tracked'];
 
 export function relayLine(notices) {
   for (const kind of RELAY_ORDER) {

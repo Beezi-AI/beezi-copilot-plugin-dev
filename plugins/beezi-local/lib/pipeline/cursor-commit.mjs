@@ -54,7 +54,7 @@ function cursorPatch(ctx, cur, lastEvent) {
     subagents: { ...cur.subagents, ...ctx.subagentInfo },
     transcriptPath: ctx.transcript,
     cwd: cwd == null ? null : cwd,
-    ...(lastPayload == null ? {} : { lastReport: ctx.delivery.mark(lastPayload), ...(sessionName != null ? { sessionName } : {}) }),
+    ...(lastPayload == null ? {} : { lastReport: lastPayload, ...(sessionName != null ? { sessionName } : {}) }),
   };
 }
 

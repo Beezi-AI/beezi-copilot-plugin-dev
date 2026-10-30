@@ -1,4 +1,4 @@
-// POSTs planned backfill chunks with token renewal, gzip with a plain fallback, one in-run retry and halts.
+// POSTs planned backfill chunks with token renewal, gzip with a plain fallback, one in-run retry and halts, and seals the pull.
 import { apiBase, ENDPOINTS } from '../config/api.mjs';
 import { isOriginMismatch, postJson } from '../platform/http.mjs';
 import { resolveFetch } from '../platform/compat-fetch.mjs';
@@ -245,4 +245,21 @@ function mergeAccepted(result, accepted) {
 
 function setSession(result, sessionId, status, reason) {
   result.bySession.set(sessionId, foldSessionVerdict(result.bySession.get(sessionId), status, reason));
+}
+
+// Seal this user's pull for the calling tool. Idempotent server-side (snapshot_taken_at is
+// COALESCEd), so retrying a lost response is safe.
+export async function completeBackfill(session, deps = {}, options = {}) {
+  const postJsonImpl = deps.postJsonImpl == null ? postJson : deps.postJsonImpl;
+  const fetchImpl = deps.fetchImpl == null ? resolveFetch() : deps.fetchImpl;
+  const timeoutMs = options.timeoutMs == null ? DEFAULT_BACKFILL_TIMEOUT_MS : options.timeoutMs;
+  const url = `${apiBase()}${ENDPOINTS.sessionsBackfillComplete}`;
+  try {
+    const res = await postJsonImpl(url, session, {}, { fetchImpl, timeoutMs });
+    if (res.status >= 200 && res.status < 300) return { completed: true, code: null };
+    const { code, message } = await readResponseBody(res);
+    return { completed: false, code, reason: message == null ? `HTTP ${res.status}` : message };
+  } catch {
+    return { completed: false, code: null, reason: 'network' };
+  }
 }

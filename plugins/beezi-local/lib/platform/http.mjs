@@ -4,14 +4,10 @@
 import { machineHeaders } from './machine-headers.mjs';
 import { resolveFetch } from './compat-fetch.mjs';
 import { resolveAbortController } from './compat-abort.mjs';
-import { anonymizationFor, hasKind } from '../core/anon-target.mjs';
-import { anonHost } from '../core/anon-value.mjs';
 
 const DEFAULT_TIMEOUT_MS = 3000;
 
 export const ORIGIN_MISMATCH = 'ORIGIN_MISMATCH';
-export const CONSENT_HEADER = 'x-beezi-history-consent';
-export const CONSENT_VALUE = 'ask-first';
 
 // A refused send to another origin: an auth state only a new login clears, never a transport failure.
 export function isOriginMismatch(error) {
@@ -31,19 +27,13 @@ export function assertTokenOrigin(url, session) {
   throw error;
 }
 
-// Bearer, machine and consent headers; with `url`, the credential's origin pin is checked first. A workspace hiding
-// computer names gets the host name hashed with its key, or no host header without one.
+// Bearer and machine headers; with `url`, the credential's origin pin is checked first.
 export function authHeaders(session, url) {
   if (session == null || typeof session.token !== 'string' || !session.token) {
     throw new TypeError('An authenticated account session is required.');
   }
   if (url != null) assertTokenOrigin(url, session);
-  const headers = { Authorization: `Bearer ${session.token}`, ...machineHeaders(session.clientId), [CONSENT_HEADER]: CONSENT_VALUE };
-  const block = anonymizationFor(session, session.tenantId);
-  if (hasKind(block, 'hosts')) {
-    if (block.key == null) delete headers['X-Beezi-Host'];
-    else headers['X-Beezi-Host'] = anonHost(block.key, headers['X-Beezi-Host']);
-  }
+  const headers = { Authorization: `Bearer ${session.token}`, ...machineHeaders(session.clientId) };
   if (typeof session.tenantId === 'string' && session.tenantId) headers['X-Beezi-Tenant'] = session.tenantId;
   return headers;
 }

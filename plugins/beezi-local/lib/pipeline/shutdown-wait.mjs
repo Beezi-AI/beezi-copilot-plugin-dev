@@ -14,6 +14,7 @@ const WAIT_MS = 12 * 60 * 1000;
 // Long enough for an older worker to finish a poll and step aside.
 const GUARD_WAIT_MS = 3 * POLL_MS;
 const NEWLINE = 0x0a;
+const CHUNK_BYTES = 1024 * 1024;
 const SESSION_END_HOOK = 'sessionEnd';
 
 function transcriptOf(sessionId, state) {
@@ -35,26 +36,35 @@ function isMarker(e) {
 export function createTailReader(file) {
   let offset = 0;
   let line = 0;
-  let carry = Buffer.alloc(0);
+  // The unterminated line so far, as the chunk slices it spans.
+  let carry = [];
+  function scan(chunk, markers) {
+    let start = 0;
+    for (let i = chunk.indexOf(NEWLINE); i !== -1; i = chunk.indexOf(NEWLINE, start)) {
+      line += 1;
+      const event = parseEventLine(Buffer.concat(carry.concat([chunk.subarray(start, i)])).toString('utf8'), line);
+      if (event != null && isMarker(event)) markers.push(event);
+      carry = [];
+      start = i + 1;
+    }
+    if (start < chunk.length) carry.push(chunk.subarray(start));
+  }
   function read() {
     let size;
     try { size = fs.statSync(file).size; } catch { return []; }
     if (size < offset) return null;
     if (size === offset) return [];
-    const chunk = Buffer.alloc(size - offset);
-    const fd = fs.openSync(file, 'r');
-    try { fs.readSync(fd, chunk, 0, chunk.length, offset); } finally { fs.closeSync(fd); }
-    offset = size;
-    const bytes = Buffer.concat([carry, chunk]);
     const markers = [];
-    let start = 0;
-    for (let i = bytes.indexOf(NEWLINE); i !== -1; i = bytes.indexOf(NEWLINE, start)) {
-      line += 1;
-      const event = parseEventLine(bytes.slice(start, i).toString('utf8'), line);
-      if (event != null && isMarker(event)) markers.push(event);
-      start = i + 1;
-    }
-    carry = bytes.slice(start);
+    const fd = fs.openSync(file, 'r');
+    try {
+      while (offset < size) {
+        const chunk = Buffer.alloc(Math.min(CHUNK_BYTES, size - offset));
+        const got = fs.readSync(fd, chunk, 0, chunk.length, offset);
+        if (got === 0) break;
+        offset += got;
+        scan(chunk.subarray(0, got), markers);
+      }
+    } finally { fs.closeSync(fd); }
     return markers;
   }
   return { read, lines: () => line };

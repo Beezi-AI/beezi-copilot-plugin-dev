@@ -25,10 +25,7 @@ import { checkForUpdate } from '../ux/update-check.mjs';
 import { maybeRefreshQuotaInBackground } from '../billing/quota/refresh.mjs';
 import { readSessionWorkspace } from '../workspace/session-routes.mjs';
 import { expandTargets } from '../workspace/targets.mjs';
-import { isMultiTenant, joinTenantNames, offerableTenantIds } from '../workspace/tenants.mjs';
-import { markPrivacyNoticed } from '../workspace/settings-store.mjs';
-import { anonymizationFor, kindsOf, pastSessionsFor } from '../core/anon-target.mjs';
-import { OfferAction, offerAction, offerTrackingDisabled } from '../workspace/pending-history.mjs';
+import { isMultiTenant } from '../workspace/tenants.mjs';
 import { pendingAskSummary, pendingAskNotice } from '../ux/workspace-prompt.mjs';
 import { checkIn, deadlineTimer, localMaintenance } from '../pipeline/housekeeping.mjs';
 import { readUsageHold } from '../pipeline/usage-hold.mjs';
@@ -42,7 +39,6 @@ import {
   LINK_REJECTED_NOTICE,
   PLAN_UNKNOWN_NOTICE,
   STATUSLINE_DETACHED_NOTICE,
-  SYNC_NUDGE,
   accountLabel,
   consentPrompt,
   correlationOffer,
@@ -53,7 +49,7 @@ import {
 const SESSION_START_BUDGET_MS = 12000;
 // Each SessionStart request waits at most this long, and never past the run's deadline.
 const REQUEST_TIMEOUT_MS = 3000;
-const IDENTITY_FIELDS = ['email', 'name', 'tenantId', 'tenantName', 'tenants', 'anonymization', 'pastSessions'];
+const IDENTITY_FIELDS = ['email', 'name', 'tenantId', 'tenantName', 'tenants'];
 
 // The run's shared facts and its notice list; `several` is set once the linked rows are read.
 function createRun(input, deps) {
@@ -70,10 +66,9 @@ function createRun(input, deps) {
   };
 }
 
-// The notices for this session start: [{ text, kind, actionable }], a privacy notice with mark() too. `kind` is auth | update |
-// billing | policy | consent | privacy | statusline | health | targets | restart. The workspace ask and the relay of the most
-// important notice are placed by commands/session-start-hook.mjs, so additionalContext is always null here. Never throws for
-// expected failures.
+// The notices for this session start: [{ text, kind, actionable }]. `kind` is auth | update | billing | policy |
+// consent | statusline | health | targets | restart. The workspace ask and the relay of the most important notice
+// are placed by commands/session-start-hook.mjs, so additionalContext is always null here. Never throws for expected failures.
 export async function runSessionStart(input, deps = {}) {
   const run = createRun(input, deps);
   // The plugin's own version check. Started BEFORE the credential store is touched (the token read may spawn
@@ -119,8 +114,6 @@ async function accountNotices(run) {
   if (sessions.length === 0) return;
 
   const { trackingByKey, liveSessions, targetSessions } = liveTargets(sessions, workspaceState);
-  const privacy = privacyNotice(targetSessions);
-  if (privacy != null) run.notices.push({ ...privacy, kind: 'privacy', actionable: true });
   const reconciled = await reconcileBilling();
   // Fire-and-forget: the account check-in is never awaited past the deadline.
   checkIn(targetSessions, { config: reconciled.config, outcome: reconciled.outcome, via: 'session-start', fetchImpl: run.fetchImpl });
@@ -128,7 +121,7 @@ async function accountNotices(run) {
   localMaintenance({ cwd: input.cwd, gitImpl: run.gitImpl, accountKeys: rows.map((row) => row.key) });
 
   if (liveSessions.length > 0) addLiveNotices(run, reconciled);
-  addPolicyNotices(run, sessions, trackingByKey, rows);
+  addPolicyNotices(run, sessions, trackingByKey);
   addHealthNotices(run, sessions);
   await addClosingNotices(run);
 }
@@ -214,22 +207,6 @@ function liveTargets(sessions, workspaceState) {
   return { trackingByKey, liveSessions, targetSessions };
 }
 
-// The first anonymized target not yet announced for its account and workspace: { text, mark }, or null. A headerless
-// target's workspace is its block's tenant.
-export function privacyNotice(targetSessions) {
-  for (const s of targetSessions) {
-    const block = anonymizationFor(s, s.tenantId);
-    const id = s.tenantId != null ? s.tenantId : (block == null ? null : block.tenantId);
-    const shown = Array.isArray(s.privacyNoticedTenantIds) ? s.privacyNoticedTenantIds : [];
-    if (kindsOf(block).length === 0 || id == null || shown.indexOf(id) !== -1) continue;
-    return {
-      text: `Beezi: sessions in ${joinTenantNames(s, [id])} are anonymized.`,
-      mark: () => markPrivacyNoticed(s.key, [id]).catch(() => null),
-    };
-  }
-  return null;
-}
-
 // One billing snapshot for the whole run: local reads only (VS Code's entitlement included), no network and no spawn.
 async function reconcileBilling() {
   const config = readBillingConfig();
@@ -257,25 +234,12 @@ function addLiveNotices(run, reconciled) {
   if (detached) run.add('statusline', STATUSLINE_DETACHED_NOTICE);
 }
 
-// The lone workspace's cheap offer gates (local reads only) leave its past-sessions offer open; false with no workspace id.
-function offerOpen(session, row, tracking) {
-  const ids = offerableTenantIds(session);
-  const id = ids.length > 0 ? ids[0] : (row == null ? null : row.tenantId);
-  if (typeof id !== 'string' || id === '') return false;
-  const gate = offerAction(session, id, { pastSessions: pastSessionsFor(session, id), trackingDisabled: offerTrackingDisabled(session, id, tracking) });
-  return gate.action === OfferAction.SCAN;
-}
-
-function addPolicyNotices(run, sessions, trackingByKey, rows) {
+function addPolicyNotices(run, sessions, trackingByKey) {
   for (const session of sessions) {
     // A multi-workspace account's cached mode describes the web-side workspace, not this session's.
     if (isMultiTenant(session)) continue;
-    const tracking = trackingByKey.get(session.key);
-    const open = offerOpen(session, rows.find((row) => row.key === session.key), tracking);
-    const policy = trackingPolicyNotice(tracking, open);
-    const label = accountLabel(session, run.several);
-    if (policy) run.add('policy', labelled(policy, label));
-    else if (open) run.add('sync', labelled(SYNC_NUDGE, label));
+    const policy = trackingPolicyNotice(trackingByKey.get(session.key));
+    if (policy) run.add('policy', labelled(policy, accountLabel(session, run.several)));
   }
 }
 

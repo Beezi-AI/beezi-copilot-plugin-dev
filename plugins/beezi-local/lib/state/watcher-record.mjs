@@ -92,9 +92,9 @@ function keepSettled(record, keep) {
   return changed;
 }
 
-// Replaces a session's observation with the scan entry's mtime and size, keeping the hook stamp (and oversizeAt unless given).
+// Replaces a session's observation with the scan entry's mtime and size, keeping the hook stamp; an old oversizeAt is dropped.
 // A new observation supersedes the session's history settlements.
-export function storeObservation(record, entry, { at, cursorAfter, oversizeAt = null }) {
+export function storeObservation(record, entry, { at, cursorAfter }) {
   if (isPlain(record.settled)) {
     for (const settled of Object.values(record.settled)) if (isPlain(settled)) delete settled[entry.sessionId];
   }
@@ -105,7 +105,6 @@ export function storeObservation(record, entry, { at, cursorAfter, oversizeAt = 
     at,
     cursorAfter,
     hookSeenAt: keptField(stored, 'hookSeenAt'),
-    oversizeAt: oversizeAt === null ? keptField(stored, 'oversizeAt') : oversizeAt,
   };
 }
 

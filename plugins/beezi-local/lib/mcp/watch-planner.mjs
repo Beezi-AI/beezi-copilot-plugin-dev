@@ -1,7 +1,6 @@
 // Pure planning of one watcher pass over the scan and the watermark: which sessions are due, fresh, quiet or deferred.
 import { observationFor, keptField, settlementKey } from '../state/watcher-record.mjs';
 import { ACTIVE_SESSION_WINDOW_MS } from '../history/scan-limits.mjs';
-import { MAX_TRANSCRIPT_BYTES } from '../contract/report-limits.mjs';
 import { finiteNumber, isPlain } from '../core/guards.mjs';
 
 export const HOOK_QUIET_MS = 5 * 60 * 1000;
@@ -10,6 +9,8 @@ const MAX_SESSIONS_PER_PASS = 5;
 
 function changedSince(prior, entry) {
   if (prior == null) return true;
+  // An old watcher's oversizeAt marker makes the session due once; the next stored observation drops it.
+  if (keptField(prior, 'oversizeAt') !== null) return true;
   if (entry.mtimeMs > prior.mtimeMs) return true;
   // `!==` rather than `>`: a shrink is also a change, so the engine gets to report a cursor mismatch.
   return finiteNumber(prior.size) !== null && entry.size !== prior.size;
@@ -39,17 +40,12 @@ export function planPass({ entries, record, nowMs, readState, isExcluded, hasShu
   const fresh = [];
   const quiet = [];
   const hookStamps = [];
-  const oversizeNew = [];
   let cooling = 0;
   let hookActive = 0;
 
   for (const entry of entries) {
     const id = entry.sessionId;
     const prior = observationFor(record, id);
-    if (entry.size > MAX_TRANSCRIPT_BYTES) {
-      if (prior == null || keptField(prior, 'oversizeAt') === null) oversizeNew.push(entry);
-      continue;
-    }
     if (!changedSince(prior, entry)) continue;
     const active = nowMs - entry.mtimeMs <= ACTIVE_SESSION_WINDOW_MS;
     // A machine with thousands of old sessions stays at one stat each: no state read for an idle, never-seen session.
@@ -82,7 +78,7 @@ export function planPass({ entries, record, nowMs, readState, isExcluded, hasShu
   // Least recently touched first, for fairness.
   due.sort((a, b) => lastAt(a) - lastAt(b));
   freshKept.sort((a, b) => lastAt(a) - lastAt(b) || a.entry.mtimeMs - b.entry.mtimeMs);
-  return { due: due.slice(0, MAX_SESSIONS_PER_PASS), fresh: freshKept, quiet, cooling, hookActive, hookStamps, oversizeNew };
+  return { due: due.slice(0, MAX_SESSIONS_PER_PASS), fresh: freshKept, quiet, cooling, hookActive, hookStamps };
 }
 
 // Stores each hook stamp in its observation, in place; mtimeMs and size stay as the watcher last saw them, so lines past the
@@ -130,14 +126,6 @@ export function historySettlements(accountKey, tenantIds, runs, executed, ids) {
 export function settledByAll(entries, requiredKeys, isSettledFor) {
   if (requiredKeys.length === 0) return [];
   return entries.filter((entry) => requiredKeys.every((key) => isSettledFor(key, entry)));
-}
-
-// Drops a recipient whose link cutoff is unknown or later than the session's last write.
-export function postLinkRecipients(entry, recipients, cutoffs) {
-  return recipients.filter((r) => {
-    const cutoff = cutoffs.get(settlementKey(r.key, r.tenantId));
-    return cutoff != null && entry.mtimeMs >= cutoff;
-  });
 }
 
 // For an established start, one audit run per lagging recipient, replaying the lines between its own prefix and

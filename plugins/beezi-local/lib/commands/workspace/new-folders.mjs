@@ -9,7 +9,7 @@ import { UserError } from '../../core/errors.mjs';
 import { accountLabel, newFoldersConfirmation, newFoldersLabel, workspaceLines } from '../../ux/workspace-lines.mjs';
 import { machineLine } from '../../ux/machine-lines.mjs';
 import { resolveSession } from '../../workspace/session-routes.mjs';
-import { USAGE, mayPersist, parseSessionFlag, requireMulti, resolveAccount, selection } from './args.mjs';
+import { USAGE, afterRuleWrite, mayPersist, parseSessionFlag, requireMulti, resolveAccount, selection } from './args.mjs';
 import { confirmChange } from './rules.mjs';
 import { followNewFolders } from './undo.mjs';
 
@@ -34,7 +34,7 @@ async function showNewFolders(row, history) {
   console.log(machineLine([['new-folders', newFoldersNow.mode], ['set', newFoldersNow.set ? 'yes' : 'no'], ['multi', 'yes'], ['account', row.key]]));
 }
 
-export async function newFolders(argv) {
+export async function newFolders(argv, cx = { deferUpload: false }) {
   const history = argv.indexOf('--history') !== -1;
   const { session, rest: afterSession } = parseSessionFlag(argv.filter((arg) => arg !== '--history'));
   const { account, rest } = await parseAccountFlag(afterSession);
@@ -54,7 +54,8 @@ export async function newFolders(argv) {
   const before = routingOf(row);
   await setNewFolders(row.key, { mode, tenantIds });
   const fresh = await resolveAccount(row.key);
-  confirmChange(fresh, newFoldersConfirmation(row, mode, tenantIds), before);
+  confirmChange(fresh, newFoldersConfirmation(row, mode, tenantIds), before, cx);
   await followNewFolders(fresh, current, prior);
+  await afterRuleWrite(row.key, cx, cx.deps);
   console.log(machineLine([['new-folders', mode]]));
 }

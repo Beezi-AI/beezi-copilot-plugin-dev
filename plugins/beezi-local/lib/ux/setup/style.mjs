@@ -30,7 +30,6 @@ export function createStyle(options) {
     boldGreen: wrap('1;32'),
     yellow: wrap('33'),
     red: wrap('31'),
-    magenta: wrap('35'),
     violet: (level, text) => (enabled ? `\x1b[38;5;${VIOLETS[level]}m${text}${RESET}` : text),
   };
 }
@@ -87,30 +86,6 @@ export function paintRows(style, rows) {
     if (tone === null) return row;
     const rest = row.replace(/^\s+/, '');
     return row.slice(0, row.length - rest.length) + style[tone](rest);
-  }).join('\n');
-}
-
-// The K7-C offer line shapes: [pattern, painter of a matching row, tone of its wrapped rows].
-const OFFER_SHAPES = [
-  [/^(Beezi found \d+ past .+? sessions?)( \(.*)$/, (s, m) => `${s.bold(m[1])}${s.dim(m[2])}`, 'dim'],
-  [/^ {2}in (.+?)(?: \+(\d+) more)?$/, (s, m) => `  ${s.dim('in')} ${m[1]}${m[2] ? ` ${s.dim(`+${m[2]} more`)}` : ''}`, null],
-  [/^ {2}Sent$/, (s) => `  ${s.green('Sent')}`, null],
-  [/^ {4}✓ (.*)$/, (s, m) => `    ${s.green('✓')} ${m[1]}`, null],
-  [/^ {2}Hidden by your workspace( — Beezi gets made-up names)$/, (s, m) => `  ${s.magenta('Hidden by your workspace')}${s.dim(m[1])}`, null],
-  [/^ {4}◆ (.*)$/, (s, m) => `    ${s.magenta('◆')} ${m[1]}`, null],
-  [/^ {2}Never sent$/, (s) => `  ${s.dim('Never sent')}`, null],
-  [/^ {4}✕ (.*)$/, (s, m) => `    ${s.dim('✕')} ${s.dim(m[1])}`, 'dim'],
-];
-
-// One offer line wrapped to columns (none when null), its first row styled by its K7-C shape; any other line as formatLine does.
-export function formatOfferLine(style, line, columns) {
-  const rows = columns == null ? [line] : wrapLines(line, columns);
-  const shape = OFFER_SHAPES.find((entry) => entry[0].test(rows[0]));
-  if (shape === undefined) return paintRows(style, rows);
-  return rows.map((row, i) => {
-    if (i === 0) return shape[1](style, shape[0].exec(row));
-    const rest = row.replace(/^\s+/, '');
-    return shape[2] === null ? row : row.slice(0, row.length - rest.length) + style[shape[2]](rest);
   }).join('\n');
 }
 

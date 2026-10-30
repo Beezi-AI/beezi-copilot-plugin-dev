@@ -217,7 +217,6 @@ export function accountLines(rows, health, def, machine) {
     else out.push(field('Sign-in', 'OK'));
     const tenants = tenantsOf(row) || [];
     if (tenants.length > 0) out.push(field(tenants.length > 1 ? 'Workspaces' : 'Workspace', workspaceList(row)));
-    if (row.anonymization != null && row.anonymization.machineName != null) out.push(field('Appears as', row.anonymization.machineName));
     if (several) out.push(field('Analytics reads', row.key === def ? 'yes (default account)' : 'no'));
     out.push('');
   });

@@ -1,16 +1,15 @@
-// The last steps of the terminal setup: the default account, the past-sessions offer, crash reports and the status line.
+// The last steps of the terminal setup: the default account, the history upload, crash reports and the status line.
 import { usableAccounts } from './account.mjs';
-import { humanLines, lastLine, outputLines, report, reportAll, token } from './output.mjs';
-import { SYNC_COMMAND } from '../../ux/history-offer-lines.mjs';
+import { lastLine, report, reportAll, token } from './output.mjs';
 
+export const FINALIZED = 'your history pull is finalized.';
+export const FINALIZE_NOTE = 'Run /beezi-local-login on your other machines too, before their history import is finalized.';
 export const DEFAULT_UNCHANGED = 'The default account is unchanged. /beezi-local-settings account switches it later.';
 export const CRASH_QUESTION = 'How should Beezi crash reports work?';
 export const STATUS_LINE_QUESTION = "Show Beezi in the Copilot CLI's status line?";
-const OFFER_OPEN = /^<offer account="[^"]*" tenant="([^"]*)">$/;
-const OFFER_CLOSE = '</offer>';
-const QUESTION = 'question=';
-const OFFER_TOKEN = /^accept-command=.* --offer ([0-9a-f]+)(?: |$)/;
-export const UPLOAD_OPTIONS = [{ label: 'Upload now' }, { label: 'Not now', description: `run ${SYNC_COMMAND} any time` }];
+export const UPLOAD_LABEL = 'Uploading past sessions…';
+// backfill.mjs prints this once per batch; the setup shows it on the activity line instead.
+export const UPLOAD_PROGRESS = /^Beezi: (\d+)\/(\d+) sessions read…$/;
 const CRASH_OPTIONS = [
   { label: 'Correlate (recommended)', description: 'Crash reports with an installation ID, so support can find yours', mode: 'correlate' },
   { label: 'On', description: 'Crash reports without an installation ID', mode: 'on' },
@@ -18,41 +17,9 @@ const CRASH_OPTIONS = [
   { label: 'Anonymous', description: 'Stay on, and delete the installation ID and the reports that carry it', mode: 'anonymous' },
 ];
 
-// A history-offer scan's output: its <offer> blocks as { tenant, lines, question, token }, and the person's lines outside them.
-export function parseOffers(text) {
-  const offers = [];
-  const outside = [];
-  let open = null;
-  outputLines(text).forEach((line) => {
-    const head = OFFER_OPEN.exec(line);
-    if (head !== null) open = { tenant: head[1], lines: [], question: null, token: null };
-    else if (open === null) outside.push(line);
-    else if (line === OFFER_CLOSE) {
-      offers.push(open);
-      open = null;
-    } else if (line.indexOf(QUESTION) === 0) open.question = line.slice(QUESTION.length);
-    else if (OFFER_TOKEN.test(line)) open.token = OFFER_TOKEN.exec(line)[1];
-    else if (open.question === null) open.lines.push(line);
-  });
-  return { offers, notes: humanLines(outside.join('\n')) };
-}
-
-// Each offer's summary styled by line shape, then its question as a menu on "Upload now"; only that row accepts, and no answer declines.
 export async function uploadHistory(ctx, key) {
-  const scan = await ctx.run('history-offer', ['--via', 'setup', '--account', key]);
-  if (scan.code !== 0) {
-    report(ctx, scan);
-    return;
-  }
-  const { offers, notes } = parseOffers(scan.stdout);
-  notes.forEach((line) => ctx.print(line));
-  for (const offer of offers) {
-    offer.lines.forEach((line) => ctx.printOffer(line));
-    const target = ['--account', key, '--tenant', offer.tenant];
-    const picked = await ctx.ask.choose(offer.question, UPLOAD_OPTIONS, { defaultIndex: 0 });
-    const answer = picked === 0 ? ['accept', ...target, '--offer', offer.token] : ['decline', ...target];
-    reportAll(ctx, await ctx.run('history-offer', answer));
-  }
+  const result = await ctx.run('backfill', ['--account', key, '--via', 'login'], { stream: true, label: UPLOAD_LABEL, live: UPLOAD_PROGRESS });
+  if (result.stdout.indexOf(FINALIZED) !== -1) ctx.print(FINALIZE_NOTE);
 }
 
 // login Step 4: asked only when the sign-in left another account as the default reader.

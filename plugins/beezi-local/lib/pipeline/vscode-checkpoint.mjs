@@ -268,7 +268,7 @@ function commitState(ctx) {
       reported: emitted.reported,
       file: ctx.file,
       cwd: ctx.cwd == null ? null : ctx.cwd,
-      lastReport: emitted.lastPayload != null ? ctx.delivery.mark(emitted.lastPayload) : (state == null ? null : state.lastReport),
+      lastReport: emitted.lastPayload != null ? emitted.lastPayload : (state == null ? null : state.lastReport),
       sessionName: emitted.lastPayload != null || replayed ? sessionName : (state == null ? null : state.sessionName),
     },
     vscodeEmitted: provisionalAfter(cur.vscodeEmitted, emitted.reported, ctx.provisional),

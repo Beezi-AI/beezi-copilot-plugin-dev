@@ -10,10 +10,8 @@ import { isMultiTenant } from '../workspace/tenants.mjs';
 import { bindSessionRoutes } from '../workspace/routing.mjs';
 import { usesRules } from '../workspace/rule-model.mjs';
 import { enqueue, enqueueHeld } from '../delivery/queue-files.mjs';
-import { markPrivate, privateKinds } from '../core/anon-target.mjs';
 
-// → { stop: 'no-recipients'|'no-activity'|'tracking-gated' } or { stop: null, plans, senders, emit, mark, workspaceState, authorize }.
-// mark(payload) adds each planned workspace's kinds on now to the private marker; emit queues the marked copy.
+// → { stop: 'no-recipients'|'no-activity'|'tracking-gated' } or { stop: null, plans, senders, emit, workspaceState, authorize }.
 // bindCwd() names the folder a not-yet-bound live session binds from; beforeBind() false stops it as no-activity first.
 // Planning and enqueuing read no credential: authorize() reads each planned account's token once, the first time a
 // step needs the network, refreshes plans and senders with them, and → the live senders.
@@ -36,10 +34,8 @@ export async function planDelivery(sessionId, { deps = {}, options = {}, bindCwd
   const skipGate = options.skipLiveTrackingGate === true;
   const plans = withLinkedPlan(planTargets(recipients, workspaceState, options, skipGate));
   if (plans.length === 0) return { stop: 'tracking-gated' };
-  const kindsByTenant = privateKinds(plans);
-  const mark = (payload) => markPrivate(payload, kindsByTenant);
-  const emit = options.sink == null ? fanOut(plans, mark) : options.sink;
-  const delivery = { stop: null, plans, senders: sendersOf(plans), emit, mark, workspaceState, authorize: null };
+  const emit = options.sink == null ? fanOut(plans) : options.sink;
+  const delivery = { stop: null, plans, senders: sendersOf(plans), emit, workspaceState, authorize: null };
   let authorized = null;
   delivery.authorize = () => {
     if (authorized == null) {
@@ -92,7 +88,6 @@ async function authorizePlans(plans, deps) {
 }
 
 // Per account: live targets (dark ones dropped) plus every workspace held until a rule answers; accounts with neither drop out.
-// options.dropTarget(accountKey, tenantId) true removes that workspace from both.
 function planTargets(recipients, workspaceState, options, skipGate) {
   return recipients.map((s) => {
     const tracking = trackingFor(s);
@@ -101,9 +96,8 @@ function planTargets(recipients, workspaceState, options, skipGate) {
       return { session: s, multi, targets: skipGate || allowsLiveFor(s, tracking) ? [s.tenantId] : [], hold: [] };
     }
     const r = resolveTargets(s, workspaceState);
-    const kept = (t) => options.dropTarget == null || !options.dropTarget(s.key, t);
-    const targets = r.targets.filter((t) => kept(t) && (skipGate || allowsLiveFor({ ...s, tenantId: t }, tracking)));
-    const hold = r.pendingAsk ? r.askTenants.filter((t) => kept(t) && !isTenantDark(tracking, t)) : [];
+    const targets = skipGate ? r.targets : r.targets.filter((t) => allowsLiveFor({ ...s, tenantId: t }, tracking));
+    const hold = r.pendingAsk ? r.askTenants.filter((t) => !isTenantDark(tracking, t)) : [];
     return { session: s, multi, targets, hold };
   }).filter((p) => p.targets.length > 0 || p.hold.length > 0);
 }
@@ -116,15 +110,14 @@ function trackingFor(session) {
 
 // Fan each payload into every target file, plus one held copy while the session awaits a rule; each target learns the
 // payload's GitHub identity so that identity's quota rows follow its sessions only.
-function fanOut(plans, mark) {
+function fanOut(plans) {
   return (payload) => {
-    const marked = mark(payload);
     for (const p of plans) {
       for (const t of p.targets) {
-        enqueue(p.session.key, marked, t, { multi: p.multi });
+        enqueue(p.session.key, payload, t, { multi: p.multi });
         rememberIdentityTarget(p.session.key, payload.account_uuid, t);
       }
-      if (p.hold.length > 0) enqueueHeld(p.session.key, marked, p.hold);
+      if (p.hold.length > 0) enqueueHeld(p.session.key, payload, p.hold);
     }
   };
 }

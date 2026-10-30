@@ -119,7 +119,7 @@ export function interpretChunkResponse(status, response, chunk, depth) {
 
   if (status >= 200 && status < 300) {
     // The server accepted the chunk but we cannot attribute it — never ledger an outcome
-    // we did not receive.
+    // we did not receive, and never seal on top of one.
     if (!body || !Array.isArray(body.errors)) {
       return verdict(BackfillSessionStatus.UNATTRIBUTED, 'unreadable-response', 'unattributed', 'unreadable-response');
     }
@@ -136,8 +136,8 @@ export function interpretChunkResponse(status, response, chunk, depth) {
   if (status === 400 && chunk.timelines != null && chunk.timelines.length && raw.includes('timelines')) {
     // A server predating the in-band timelines 400s the whole chunk on the unknown field
     // (forbidNonWhitelisted). Retry once without them — losing timelines beats losing the
-    // usage, and a later upload (post-deploy) sends nothing new only because the ledger
-    // already holds these sessions; acceptable for a deploy-order violation.
+    // usage, and the next login (post-deploy) delivers nothing new only because the ledger
+    // already sealed these sessions; acceptable for a deploy-order violation.
     return { retry: { ...chunk, timelines: [] } };
   }
   if (status === 400 && new Set(chunk.sessionIds).size > 1 && depth < MAX_BISECT_DEPTH) {

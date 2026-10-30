@@ -27,7 +27,7 @@ import {
 import { recordUndo, routingOf } from '../../state/rule-undo.mjs';
 import { machineLine } from '../../ux/machine-lines.mjs';
 import {
-  USAGE, mayPersist, pastSessionOptions, parseSessionFlag, requireKnownWorkspaces, requireMulti, requireNoneForSingle,
+  USAGE, afterRuleWrite, mayPersist, pastSessionOptions, parseSessionFlag, requireKnownWorkspaces, requireMulti, requireNoneForSingle,
   resolveAccount, selectedRows, selection, sessionCountsByKey,
 } from './args.mjs';
 import { displayPath } from '../../core/text.mjs';
@@ -90,10 +90,10 @@ export async function bindOpenSessions(row, indices, current, ctx) {
   }
 }
 
-// Prints a write's confirmation, with the undo hint, as the first stdout line and records it as the change undo reverts.
+// Prints a write's confirmation as the first stdout line (the undo hint unless the flow defers) and records it as the change undo reverts.
 // `before` is routingOf the raw row read before the write and `fresh` the raw row after it, so restoreRouting compares like with like.
-export function confirmChange(fresh, confirmation, before) {
-  console.log(withUndoHint(confirmation.line));
+export function confirmChange(fresh, confirmation, before, cx) {
+  console.log(withUndoHint(confirmation.line, cx.deferUpload));
   recordUndo({ account: fresh.key, summary: confirmation.summary, change: confirmation.change, was: confirmation.was, before, after: routingOf(fresh) });
 }
 
@@ -201,7 +201,7 @@ export function parseRuleTarget(rest) {
   return { target, refs };
 }
 
-async function ruleAdd(argv) {
+async function ruleAdd(argv, cx = { deferUpload: false }) {
   const { session, rest: afterSession } = parseSessionFlag(argv);
   const { account, rest } = await parseAccountFlag(afterSession);
   const { target, refs } = parseRuleTarget(rest);
@@ -217,12 +217,13 @@ async function ruleAdd(argv) {
   const before = routingOf(row);
   const n = (await setWorkspaceRule(row.key, { kind: key.kind, match: key.match, label: key.label, tenantIds })).index;
   const fresh = await resolveAccount(row.key);
-  confirmChange(fresh, ruleAddedConfirmation(row, key, tenantIds, n), before);
+  confirmChange(fresh, ruleAddedConfirmation(row, key, tenantIds, n), before, cx);
   await bindOpenSessions(fresh, [n], current, ctx);
+  await afterRuleWrite(row.key, cx, cx.deps);
   console.log(machineLine([['rule', n]]));
 }
 
-async function ruleSet(argv) {
+async function ruleSet(argv, cx = { deferUpload: false }) {
   const { session, rest: afterSession } = parseSessionFlag(argv);
   const { account, rest } = await parseAccountFlag(afterSession);
   if (rest.length < 2) throw new UserError(USAGE);
@@ -236,12 +237,13 @@ async function ruleSet(argv) {
   const before = routingOf(row);
   await setWorkspaceRule(row.key, { kind: found.kind, match: found.match, label: found.label, tenantIds });
   const fresh = await resolveAccount(row.key);
-  confirmChange(fresh, ruleSetConfirmation(row, found, tenantIds), before);
+  confirmChange(fresh, ruleSetConfirmation(row, found, tenantIds), before, cx);
   await bindOpenSessions(fresh, [found.index], current, createRouteContext());
+  await afterRuleWrite(row.key, cx, cx.deps);
   console.log(machineLine([['rule', found.index]]));
 }
 
-async function ruleRemove(argv) {
+async function ruleRemove(argv, cx = { deferUpload: false }) {
   const { account, rest } = await parseAccountFlag(argv);
   if (rest.length !== 1) throw new UserError(USAGE);
   const row = await resolveAccount(account);
@@ -249,13 +251,14 @@ async function ruleRemove(argv) {
   const before = routingOf(row);
   const removed = await removeWorkspaceRule(row.key, String(rest[0]).replace(/^R/i, ''));
   const fresh = await resolveAccount(row.key);
-  confirmChange(fresh, ruleRemovedConfirmation(row, removed), before);
+  confirmChange(fresh, ruleRemovedConfirmation(row, removed), before, cx);
+  await afterRuleWrite(row.key, cx, cx.deps);
   console.log(machineLine([['removed', removed.index]]));
   await rerouteGone(fresh, [removed], createRouteContext());
 }
 
 // One rule per repo or folder that `routes` lists, all sending to the same workspaces.
-async function ruleAddAll(argv) {
+async function ruleAddAll(argv, cx = { deferUpload: false }) {
   const { session, rest: afterSession } = parseSessionFlag(argv);
   const { account, rest } = await parseAccountFlag(afterSession);
   if (rest.length === 0) throw new UserError(USAGE);
@@ -276,18 +279,19 @@ async function ruleAddAll(argv) {
     console.log('✓ No repos or folders are waiting for a rule.');
   } else {
     const fresh = await resolveAccount(row.key);
-    confirmChange(fresh, rulesAddedConfirmation(row, n, tenantIds), before);
+    confirmChange(fresh, rulesAddedConfirmation(row, n, tenantIds), before, cx);
     await bindOpenSessions(fresh, added, current, ctx);
   }
+  await afterRuleWrite(row.key, cx, cx.deps);
   console.log(machineLine([['rules-added', n]]));
 }
 
-export async function rule(argv) {
+export async function rule(argv, cx = { deferUpload: false }) {
   const [sub, ...rest] = argv;
-  if (sub === 'add') { await ruleAdd(rest); return; }
-  if (sub === 'set') { await ruleSet(rest); return; }
-  if (sub === 'remove') { await ruleRemove(rest); return; }
-  if (sub === 'add-all') { await ruleAddAll(rest); return; }
+  if (sub === 'add') { await ruleAdd(rest, cx); return; }
+  if (sub === 'set') { await ruleSet(rest, cx); return; }
+  if (sub === 'remove') { await ruleRemove(rest, cx); return; }
+  if (sub === 'add-all') { await ruleAddAll(rest, cx); return; }
   throw new UserError(USAGE);
 }
 

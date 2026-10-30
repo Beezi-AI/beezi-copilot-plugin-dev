@@ -26,7 +26,6 @@ import { UserError } from '../core/errors.mjs';
 import { resolveTargets } from '../workspace/targets.mjs';
 import { currentSessionWorkspace } from '../workspace/session-routes.mjs';
 import { nonEmpty } from '../core/guards.mjs';
-import { anonymizationScope } from '../core/anon-target.mjs';
 
 const SIGN_OUT_HINT = 'To add a different account, sign out of Beezi in the browser first or use a private window.';
 
@@ -164,9 +163,7 @@ async function linkGrant(run) {
   run.lifecycle = await acquireCredentialLock({ ...run.lockOptions, lifecycle: true }, run.deps);
   if (!run.lifecycle) throw new UserError('Another Beezi account change is in progress. Retry /beezi-local-login in a moment.');
   const identity = { email: who.email.toLowerCase(), name: who.name, tenantId: who.tenantId, tenantName: who.tenantName,
-    tenants: Array.isArray(who.tenants) ? who.tenants : null, anonymization: who.anonymization == null ? null : who.anonymization,
-    pastSessions: who.pastSessions == null ? null : who.pastSessions };
-  run.fresh = { ...run.fresh, ...anonymizationScope(identity) };
+    tenants: Array.isArray(who.tenants) ? who.tenants : null };
   await identifyMigratedRows(run);
   const existing = await findByEmail(identity.email, run.deps);
   if ((existing && existing.status) === 'linked') {
@@ -204,7 +201,7 @@ async function exchangeAndVerify(run) {
 
 // The probe session for a ready stored grant, pinned to its API origin when the grant recorded one.
 function storedSession(a, auth) {
-  return pinnedTo({ key: a.key, token: auth.accessToken, clientId: auth.clientId || a.clientId, ...anonymizationScope(a) }, auth);
+  return pinnedTo({ key: a.key, token: auth.accessToken, clientId: auth.clientId || a.clientId }, auth);
 }
 
 // A stored account's own grant, refreshed once on a 401: { auth, probe, session }; probe is null when it cannot be used.
@@ -336,9 +333,8 @@ async function logDefaultReader({ deps, log }, key) {
 async function checkInTargets(run, key, identity, existing) {
   const merged = { ...(existing || {}), ...identity, key, tenants: identity.tenants != null ? identity.tenants : (existing ? existing.tenants : null) };
   const resolved = resolveTargets(merged, currentSessionWorkspace());
-  const base = { ...run.fresh, key, tenants: merged.tenants, anonymization: merged.anonymization };
   for (const tenantId of resolved.targets) {
-    const session = resolved.multi ? { ...base, tenantId } : { ...base };
+    const session = resolved.multi ? { ...run.fresh, key, tenantId } : { ...run.fresh, key };
     await run.sync(session, { force: true, via: 'login' }).catch(() => {});
   }
 }

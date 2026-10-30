@@ -17,12 +17,27 @@ export function settleWaitOf({ settleWaitMs, budgetMs, trigger }) {
   return Math.min(settleWaitMs, budgetMs == null ? settleWaitMs : budgetMs / 2);
 }
 
+// The chat file's size and mtime as one comparable key, or null when it cannot be read.
+function stampOf(file) {
+  try {
+    const st = fs.statSync(file);
+    return `${st.size}:${st.mtimeMs}`;
+  } catch {
+    return null;
+  }
+}
+
 // A turn-end hook can run before VS Code saves the request it ends; a short re-read bills it now instead of next time.
+// The first poll always re-reads, since the caller's read has no stamp; later polls only once size or mtime changed.
 export async function awaitSettled(session, file, waitMs) {
   const settleUntil = Date.now() + waitMs;
   let current = session;
+  let readStamp = null;
   while (newestUnsettled(current) && Date.now() + SETTLE_POLL_MS <= settleUntil) {
     await sleep(SETTLE_POLL_MS);
+    const stamp = stampOf(file);
+    if (stamp == null || stamp === readStamp) continue;
+    readStamp = stamp;
     const again = readVscodeSession(file);
     if (again != null && again.sessionId === session.sessionId) current = again;
   }

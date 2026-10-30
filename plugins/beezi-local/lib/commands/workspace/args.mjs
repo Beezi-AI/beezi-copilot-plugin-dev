@@ -9,6 +9,7 @@ import { ruleSessionCounts } from '../../workspace/route-describe.mjs';
 import { UserError } from '../../core/errors.mjs';
 import { checkInteractive } from '../../host/mode-guard.mjs';
 import { accountLabel } from '../../ux/workspace-lines.mjs';
+import { startHistoryWorker } from '../../history/pending-trigger.mjs';
 
 export const USAGE = 'Usage: workspace.mjs rules [--table] [--session <id>] [--account <ref>]'
   + ' | rule add (--current | --repo <url> | --folder <path> | --outside) (<id|name|n>… | none) [--session <id>] [--account <ref>]'
@@ -101,13 +102,21 @@ export function requireNoneForSingle(row, refs) {
   throw new UserError(`${accountLabel(row)} has one workspace, so a rule can only stop tracking a repo or folder. Pass none.`);
 }
 
-// Ids/names/positions (comma lists too) in row order; `none` anywhere wins and means send nowhere.
+// Ids/names/positions (comma lists too) in row order; `none` alone means send nowhere, and none beside a workspace is refused.
 export function selection(row, refs) {
   const values = refValues(refs);
   if (values.length === 0) throw new UserError(USAGE);
-  if (values.some((v) => v.toLowerCase() === 'none')) return [];
+  const nones = values.filter((v) => v.toLowerCase() === 'none').length;
+  if (nones === values.length) return [];
+  if (nones > 0) throw new UserError('Pick workspaces or none, not both.');
   const picked = values.map((v) => resolveTenantRef(row, v));
   return tenantsOf(row).map((t) => t.id).filter((id) => picked.indexOf(id) !== -1);
+}
+
+// Starts the history upload a write just requested, unless the calling flow uploads next.
+export async function afterRuleWrite(key, ctx, deps = {}) {
+  if (ctx != null && ctx.deferUpload) return;
+  await (deps.startHistoryWorker == null ? startHistoryWorker : deps.startHistoryWorker)(key);
 }
 
 // Past sessions come from the Copilot session-file index; the recorded directory is read from each session's head.

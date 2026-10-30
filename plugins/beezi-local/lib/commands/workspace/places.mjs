@@ -27,17 +27,17 @@ export function pickerPlaces(row, entries, dir, ctx, options = {}) {
 }
 
 // A header, then per place its F line and the rule-add command to finish with <tenants>; nothing when there is no place.
-export function pickerLines(row, places) {
+export function pickerLines(row, places, defer = false) {
   if (places.length === 0) return [];
   const lines = [pickerHeaderLine(row, places.length)];
   places.forEach((place, i) => {
     lines.push(pickerLine(i + 1, row, place));
-    lines.push(ruleAddCommandLine(`F${i + 1}-command`, place, row));
+    lines.push(ruleAddCommandLine(`F${i + 1}-command`, place, row, defer));
   });
   return lines;
 }
 
-export async function places(argv) {
+export async function places(argv, cx = { deferUpload: false }) {
   const { session, rest: afterSession } = parseSessionFlag(argv);
   const { account, rest } = await parseAccountFlag(afterSession);
   if (rest.length !== 0) throw new UserError(USAGE);
@@ -47,6 +47,6 @@ export async function places(argv) {
   const found = tenants == null || tenants.length === 0
     ? []
     : pickerPlaces(row, await listSessionFiles(), choiceDir(current.state), createRouteContext(), pastSessionOptions(current.sessionId));
-  for (const line of pickerLines(row, found)) console.log(line);
+  for (const line of pickerLines(row, found, cx.deferUpload)) console.log(line);
   console.log(machineLine([['places', found.length]]));
 }

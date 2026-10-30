@@ -6,8 +6,6 @@ import { usesRules } from '../workspace/rule-model.mjs';
 import { accountRowFor, isMultiTenant, tenantsOf } from '../workspace/tenants.mjs';
 import { readSessionWorkspace } from '../workspace/session-routes.mjs';
 import { resolveTargets } from '../workspace/targets.mjs';
-import { linkCutoffMs } from '../history/offer-scan.mjs';
-import { settlementKey } from '../state/watcher-record.mjs';
 import { str } from '../core/guards.mjs';
 
 function headCwd(transcriptPath) {
@@ -70,15 +68,4 @@ export function liveRecipients(sessions) {
     } catch { /* an account whose state cannot be read is skipped this pass */ }
   }
   return out;
-}
-
-// Each recipient's link cutoff by settlement key; null when its link time is unknown or unreadable.
-export function recipientCutoffs(recipients) {
-  const cutoffs = new Map();
-  for (const r of recipients) {
-    let cutoff = null;
-    try { cutoff = linkCutoffMs(accountRowFor(r), r.tenantId, readTrackingState(r.key)); } catch { cutoff = null; }
-    cutoffs.set(settlementKey(r.key, r.tenantId), cutoff);
-  }
-  return cutoffs;
 }

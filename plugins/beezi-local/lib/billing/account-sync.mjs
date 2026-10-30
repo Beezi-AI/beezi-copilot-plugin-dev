@@ -9,8 +9,6 @@ import { targetIdentities } from '../state/identity-targets.mjs';
 import { readBillingConfig as _readBillingConfig } from './billing-config.mjs';
 import { resolveBilling } from './plan-resolution.mjs';
 import { accountStamp } from './identity-stamp.mjs';
-import { anonymizationFor, hasKind } from '../core/anon-target.mjs';
-import { anonymizeAccountSync } from '../core/anonymize-payload.mjs';
 
 const STATE_VERSION = 1;
 
@@ -117,13 +115,8 @@ export async function syncAccountIfNeeded(session, options = {}, deps = {}) {
   try {
     let config = null;
     try { config = readConfig(); } catch { config = null; }
-    const built = buildAccountSyncPayloads({ config, identityKeys: queuedIdentities(session) });
-    if (built.length === 0) return { synced: false, reason: 'nothing-known' };
-    // A target hiding accounts is sent hashed identities, and nothing at all while its key is missing.
-    const block = anonymizationFor(session, session.tenantId);
-    const hashes = hasKind(block, 'accounts');
-    if (hashes && block.key == null) return { synced: false, reason: 'anonymization-key-missing' };
-    const payloads = hashes ? built.map((payload) => anonymizeAccountSync(payload, block.key)) : built;
+    const payloads = buildAccountSyncPayloads({ config, identityKeys: queuedIdentities(session) });
+    if (payloads.length === 0) return { synced: false, reason: 'nothing-known' };
 
     // One body hashes as before, so a single-identity machine keeps the marker older versions wrote.
     const hash = payloadHash(payloads.length === 1 ? payloads[0] : payloads);
