@@ -13,6 +13,8 @@ import { readBillingConfig } from '../billing/billing-config.mjs';
 import { resolveBilling } from '../billing/plan-resolution.mjs';
 import { maybeRefreshQuotaInBackground } from '../billing/quota/refresh.mjs';
 import { AllowanceType, AllowanceUnit } from '../billing/quota/snapshot.mjs';
+import { anonymizationFor, hasKind } from '../core/anon-target.mjs';
+import { anonymizeUsageRow } from '../core/anonymize-payload.mjs';
 
 // Records the monthly Copilot quota readings worth sending and drains them to /me/copilot/usage.
 //
@@ -217,6 +219,7 @@ function routedRows(rows, clone, multi) {
 }
 
 // Ships one account's queued rows to one target workspace, in order, stopping at the first refusal or at the shared deadline.
+// A target hiding accounts gets each row hashed with its key; without the key it gets nothing and its marker stays put.
 async function drainTarget(clone, tag, multi, deadline, fetchImpl) {
   const state = readPending(clone.key);
   const sentMs = Object.prototype.hasOwnProperty.call(state.sent, tag) ? Date.parse(state.sent[tag]) : NaN;
@@ -226,6 +229,9 @@ async function drainTarget(clone, tag, multi, deadline, fetchImpl) {
   if (!Number.isFinite(sentMs)) due = routed.slice(-1);
   else due = routed.filter((r) => Date.parse(r.fetched_at) > sentMs);
   if (due.length === 0) return { posted: 0, deferred: 0, stop: null };
+  const block = anonymizationFor(clone, clone.tenantId);
+  const hashes = hasKind(block, 'accounts');
+  if (hashes && block.key == null) return { posted: 0, deferred: due.length, stop: null };
   const url = `${apiBase()}${ENDPOINTS.usageSnapshot}`;
   let posted = 0;
   let stop = null;
@@ -235,7 +241,8 @@ async function drainTarget(clone, tag, multi, deadline, fetchImpl) {
     if (remaining <= 0) { stop = 'deadline'; break; }
     let res = null;
     try {
-      res = await postJson(url, clone, row, { fetchImpl, timeoutMs: Math.min(REQUEST_CAP_MS, remaining) });
+      const body = hashes ? anonymizeUsageRow(row, block.key) : row;
+      res = await postJson(url, clone, body, { fetchImpl, timeoutMs: Math.min(REQUEST_CAP_MS, remaining) });
     } catch {
       stop = 'network';
       break;

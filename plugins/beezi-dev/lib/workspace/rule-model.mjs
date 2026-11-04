@@ -1,10 +1,9 @@
 // The stored workspace-rule model: rule normalization, the outside key and short rule names.
 import { isMultiTenant, isSingleTenant } from './tenants.mjs';
 import { stringIds } from '../core/guards.mjs';
+import { isLineSafe } from '../core/text.mjs';
 
 const OUTSIDE_LABEL = 'outside a project';
-// A match or label holding a control character could forge a machine line.
-const UNSAFE_LINE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 
 // The key of every home (or above), /, temp or Copilot app chat directory: one askable place with its own rule.
 export function outsideKey() {
@@ -63,7 +62,7 @@ export function ruleReasonText(index, own, short) {
   return own === false ? `${name} for ${short}` : name;
 }
 
-// Whether a place's match and label are safe to print on a machine line (no control character).
+// Whether a place's match and label pass isLineSafe, a missing one read as its String().
 export function isLineSafePlace(place) {
-  return place != null && !UNSAFE_LINE.test(String(place.match)) && !UNSAFE_LINE.test(String(place.label));
+  return place != null && isLineSafe(String(place.match)) && isLineSafe(String(place.label));
 }

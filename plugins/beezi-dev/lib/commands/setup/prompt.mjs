@@ -151,11 +151,16 @@ async function chooseMany(p, question, options, opts) {
   if (p.closed) return null;
   if (options.length === 0) return [];
   const exclusive = opts && opts.exclusive ? opts.exclusive : [];
-  if (fitsScreen(p, options.length + 2) && rawOn(p)) return keyChooseMany(p, question, options, exclusive);
+  const initial = opts && opts.picked ? opts.picked : [];
+  if (fitsScreen(p, options.length + 2) && rawOn(p)) return keyChooseMany(p, question, options, exclusive, initial);
   showMenu(p, question, options, -1);
+  const query = initial.length === 0
+    ? 'Choose one or more (for example 1,2), or press Enter to skip:'
+    : `Choose one or more (for example 1,2) [${initial.map((i) => i + 1).join(',')}]:`;
   for (;;) {
-    const answer = await ask(p, `${p.style.boldCyan('Choose one or more (for example 1,2), or press Enter to skip:')} `);
+    const answer = await ask(p, `${p.style.boldCyan(query)} `);
     if (answer === null) return null;
+    if (answer === '') return initial;
     const picked = parseNumbers(answer, options.length);
     if (picked !== null) {
       const mixed = mixedExclusive(picked, exclusive);

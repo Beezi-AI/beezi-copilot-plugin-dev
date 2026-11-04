@@ -7,7 +7,7 @@ import { bindSessionRoutes } from '../workspace/routing.mjs';
 import { createRouteContext, routeKeyForDir } from '../workspace/route-key.mjs';
 import { ruleReasonText, rulesOf, shortLabel, usesRules } from '../workspace/rule-model.mjs';
 import { unattendedStatus, UnattendedSignal } from '../host/attendance.mjs';
-import { displayText } from '../auth/whoami.mjs';
+import { displayText } from '../core/text.mjs';
 import { pluginRoot as installRoot } from '../config/plugin-root.mjs';
 import { AccountStatus, listAccounts as _listAccounts } from '../accounts/index-store.mjs';
 import { markJoinNoticed } from '../workspace/settings-store.mjs';

@@ -1,5 +1,33 @@
 # Beezi plugin release notes
 
+## 0.3.0 (2026-11-03) — Past sessions that upload without asking
+
+### New
+- **Uploads without asking** — a workspace owner can choose to upload past sessions without asking. Beezi still shows the summary, says that workspace uploads past sessions without asking, and uploads them in the background: at sign-in, during setup, when a new session starts and from `/beezi-dev-sync`.
+
+### Improved
+- **One summary for several workspaces** — when several of your workspaces have past sessions, Beezi shows one summary with each workspace, its number of sessions and what it hides, then asks one question for the workspaces that ask first: "Upload to both" (or "Upload to all 3", and so on), "Choose for each" or "Not now".
+
+## 0.2.1 (2026-10-30) — A clearer past-sessions summary
+
+### Improved
+- **Past-sessions summary as a checklist** — the summary now lists what is sent, what your workspace hides and what is never sent, each on its own short line. The question offers "Upload now" or "Not now", and the terminal setup asks it as an arrow-key menu.
+
+## 0.2.0 (2026-10-30) — Anonymized workspaces and past sessions on your say-so
+
+### New
+- **Choose what each workspace hides** — a Beezi workspace can hide repos, branches, session names, your computer name and your GitHub account, each on its own. Hidden details arrive as made-up values, and hiding session names also leaves out the agent name and error messages.
+- **Past sessions after you say yes** — Beezi shows how many past sessions it found, from when and where, and what uploading them sends, then uploads them after you choose "Upload". You can be asked at sign-in, during setup, when a new session starts or from `/beezi-dev-sync`. Since 0.3.0 a workspace can also upload them without asking.
+- **Privacy notice** — the first session start in an anonymized workspace says that its sessions are anonymized, once per account and workspace.
+- **Appears as** — `/beezi-dev-settings account` shows the name this machine appears as in an anonymized workspace.
+
+### Improved
+- **Rule changes upload nothing by themselves** — adding or changing a folder rule uploads no past sessions by itself. Beezi asks again about that folder's past sessions; a workspace whose owner chose upload without asking gets a notice and the upload instead.
+- **"Not now" is remembered** — Beezi doesn't ask that workspace again until its owner changes the past-sessions setting. Run `/beezi-dev-sync` any time to upload them.
+- **Hidden details stay hidden** — a detail the question said was hidden is hidden in that upload even if the setting changes before it runs.
+- **Declined sessions** — sessions you said Not now to are not asked about again until the workspace's choice changes; `/beezi-dev-sync` still shows them.
+- **GitHub sign-in in hidden workspaces** — when GitHub logins are hidden, Beezi also sends whether the account is on github.com.
+
 ## 0.1.96 (2026-10-29) — Large sessions keep tracking
 
 ### Fixed

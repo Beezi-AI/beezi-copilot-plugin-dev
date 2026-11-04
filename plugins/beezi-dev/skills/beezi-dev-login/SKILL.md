@@ -1,6 +1,6 @@
 ---
 name: beezi-dev-login
-description: Link a Beezi account to this machine with a browser sign-in, record which Copilot plan pays for it, and upload past Copilot sessions. Use when the user wants to log in, sign in or connect to Beezi, add another Beezi account, or when a Beezi tool says this machine is not linked. Run it again to add accounts or resume an interrupted upload.
+description: Link a Beezi account to this machine with a browser sign-in, record which Copilot plan pays for it, and offer to upload past Copilot sessions. Use when the user wants to log in, sign in or connect to Beezi, add another Beezi account, or when a Beezi tool says this machine is not linked. Run it again to add accounts.
 argument-hint: "[pasted sign-in address | <n>]"
 allowed-tools: shell(node:*), ask_user
 ---
@@ -89,7 +89,7 @@ output.
 
 Show the `<sign-in>` block except the machine line `account=<key>` (never shown). If it says the
 machine is already linked as that account, say so: the script still went on, so a changed plan is
-refreshed and an interrupted upload resumes. On `next=stop`, show the block and STOP, except in the
+refreshed. On `next=stop`, show the block and STOP, except in the
 case Step 1p covers. If the sign-in fails with a network or connection error, do not retry and do not
 continue: tell the user the sign-in could not reach Beezi, and that a sandboxed session may block the
 network. A failed sign-in never removes an earlier authorization; if the output says so, relay it
@@ -120,8 +120,8 @@ in several workspaces that has never set where repos and folders with no rule go
 block, say nothing about it.
 
 The `<setup account="<key>">` block is for you only: one `W. <workspace> account=<key> tenant=<id>
-role=<role>` line per workspace, then `sessions=<N> places=<M>` (the past sessions the history upload
-would send, and the repos and folders they ran in) or a `✗` line when they could not be counted (write
+role=<role>` line per workspace, then `sessions=<N> places=<M>` (past sessions on this machine, and the repos
+and folders they ran in) or a `✗` line when they could not be counted (write
 it verbatim), then the choices as `O<i>. <label> — <description>` lines. `O<i>` for `i` up to the
 number of `W.` lines is the `i`-th `W.` line's workspace; the next `O` line is "Several workspaces…" and
 the last `O` line is "Let me choose per repo".
@@ -143,14 +143,14 @@ setting was made meanwhile: follow its `next=` line.
 Then, by the answer:
 - a workspace → run EXACTLY, with that `W.` line's `tenant=` value (the template already single-quotes
   it, so PowerShell keeps it one argument):
-  `node "<plugin-root>/scripts/workspace.mjs" new-folders send '<id>' --account <key> --defer-upload`
+  `node "<plugin-root>/scripts/workspace.mjs" new-folders send '<id>' --account <key>`
 - "Several workspaces…" → ask "Which workspaces should get analytics from this machine?" (several
   allowed, one choice per `W.` line: the workspace name — its `role=` value, or "Beezi workspace" when
   empty). End the question with " You can pick more than one: type their numbers separated by
   commas." Run EXACTLY, with the chosen `tenant=` values joined by commas (one chosen workspace is fine):
-  `node "<plugin-root>/scripts/workspace.mjs" new-folders send '<id>,<id>' --account <key> --defer-upload`
+  `node "<plugin-root>/scripts/workspace.mjs" new-folders send '<id>,<id>' --account <key>`
   An empty, unmatched or dismissed answer runs nothing, and the next login asks again.
-- "Let me choose per repo" → run EXACTLY `node "<plugin-root>/scripts/workspace.mjs" new-folders ask --account <key> --defer-upload`
+- "Let me choose per repo" → run EXACTLY `node "<plugin-root>/scripts/workspace.mjs" new-folders ask --account <key>`
 - a dismissal, or a question skipped → run nothing; the next login asks again.
 
 Write the command's first line verbatim, then carry on with `--from here`.
@@ -173,7 +173,7 @@ Choices: one per `W.` line of the block (name — role, or "Beezi workspace"), t
 folder is sent" for `outside`). Run EXACTLY, with `<ids>` = the chosen `tenant=` values joined by
 commas, or `none` when the last choice is the whole answer:
 
-`node "<plugin-root>/scripts/workspace.mjs" rule add --current --account <key> --defer-upload '<ids>'`
+`node "<plugin-root>/scripts/workspace.mjs" rule add --current --account <key> '<ids>'`
 
 and write its first line verbatim. The last choice stands alone: when an answer has it together with a workspace, run nothing and ask the
 same question once more, starting with `"Don't track" can't be combined with a workspace — pick one or the other.`
@@ -235,7 +235,7 @@ new-workspace questions and run nothing for them.
 
 First, new workspaces. The script stops with `next=joined` when the `<joined account="<key>">` block
 (for you only) has something to review; it is
-`node "<plugin-root>/scripts/workspace.mjs" joined --account <key> --defer-upload`'s output.
+`node "<plugin-root>/scripts/workspace.mjs" joined --account <key>`'s output.
 
 Lines:
 - `<email>: you joined <names> — <N> repos or folders to review account=<key> new=<ids>` starts the
@@ -253,7 +253,7 @@ Lines:
 - `joined=<total>` is last.
 
 More than 4 `J` lines → first ask "You joined <names>. Where should analytics for these <N> repos and
-folders go? Their past sessions will be sent there too." with:
+folders go?" with:
 - "Add <names> to all <N> — repos you don't track, and ones with no rule yet, stay as they are";
 - "Choose repos — pick which repos and folders go to each new workspace";
 - "Leave them as they are — nothing changes, and you're not asked about <names> again".
@@ -266,7 +266,7 @@ the next login or /beezi-dev-sync asks again.
 
 Per-workspace questions: one `ask_user` question per `W.` line with `new=yes`, in order, where
 `<name>` is that line's text after `W. ` up to ` account=`. Ask "Which repos and folders should also
-send analytics to <name>? Their past sessions will be sent there too." Several allowed: number the
+send analytics to <name>?" Several allowed: number the
 choices and end the question with " You can pick more than one: type their numbers separated by
 commas." Choices: one per `J` line, in order, "<short> — Now: <where>" (or "<short> — No rule yet"
 when `<where>` is `no rule yet`), where `<short>` is the `J` line's text after `J<i>. ` up to ` (` or
@@ -285,7 +285,7 @@ otherwise run no `done-command`, and the next login or sync asks again. Never re
 line verbatim. Then carry on with `--from routes`.
 
 Then, repos and folders with no rule. The `<routes account="<key>">` block (for you only, except the
-line named below) is `node "<plugin-root>/scripts/workspace.mjs" routes --account <key> --defer-upload`'s
+line named below) is `node "<plugin-root>/scripts/workspace.mjs" routes --account <key>`'s
 output; the script stops with `next=routes` when it lists any.
 
 Lines: `W.` lines as in Step 1w; `P<i>. <short> (<label>), <k> sessions account=<key> kind=<repo|folder|outside> match=<…>`
@@ -316,21 +316,45 @@ question once more, starting with `"Don't track" can't be combined with a worksp
 A second mixed answer is a dismissal. Never rebuild a command or re-quote its path. Write each
 command's first line verbatim. Then go to Step 5b.
 
-Step 5b — upload past sessions. This is always the last step. Run EXACTLY, with no other flags:
+Step 5b — past sessions. This is always the last step. Run EXACTLY, with no other flags:
 
-`node "<plugin-root>/scripts/backfill.mjs" --account <key> --via login`
+`node "<plugin-root>/scripts/history-offer.mjs" --via login --account <key>`
 
-It uploads this machine's Copilot CLI and VS Code Agent Host history once and can take minutes. Relay
-its output verbatim. Nothing new to upload means the history is up to date. If some sessions were not
-delivered, running /beezi-dev-login again resumes. If it says the one-time import was already used, that is
-final: do not retry, do not look for a way around it, and never add or suggest `--force`, `--since` or
-`--dry-run`. Only when it reports the import finalized, tell the user to run /beezi-dev-login on their other
-machines before those finalize too.
+Its last two lines are `uploads=<n>` and `offers=<n>` (never shown). `offers=0` with `uploads=0` means
+there is nothing to say: say nothing more about past sessions. A `✗` line outside the blocks says a
+workspace could not be checked: write it verbatim. Otherwise the output holds, in order, blocks of
+three kinds (the tag lines are never shown):
+- `<upload account="<key>" tenant="<id>">` … `</upload>`: a workspace that uploads past sessions
+  without asking; the script has already started that upload. Write its lines verbatim inside one plain
+  fenced code block (```, no language), keeping every leading space and line break, and ask nothing.
+- `<offer account="<key>" tenant="<id>">` … `</offer>`: one workspace that asks first. Write its lines
+  before `question=`, when it has any, verbatim inside one such code block, then ask the `question=`
+  text with `ask_user`, with the choices "Upload now" and "Not now". "Upload now" → run its
+  `accept-command=` text EXACTLY and write its line verbatim; anything else, a dismissed question or no
+  answer → run its `decline-command=` text EXACTLY and write its line verbatim.
+- `<offers account="<key>">` … `</offers>`: several workspaces. Write its lines before its first
+  `question=` or `<offer>` line (or up to `</offers>`) verbatim inside one such code block. When a
+  `question=` line comes before its first `<offer>`, ask that `question=` text verbatim with
+  `ask_user`, with the choices "<the `all-choice=` text>", "Choose for each — One question per
+  workspace, as today." and "Not now — Run /beezi-dev-sync any time.":
+  - the `all-choice=` answer → run its `accept-all-command=` text EXACTLY and write every line it
+    prints verbatim;
+  - "Not now", anything else, a dismissed question or no answer → run its `decline-all-command=` text
+    EXACTLY and write its line verbatim;
+  - after either of those, run no command of its `<offer>` blocks;
+  - "Choose for each" → ask each `<offer>` block inside it as above.
 
-- `… to this workspace you joined` / `this workspace already has this machine's history` / `Some history
-  did not reach this workspace this time…` — the upload for a workspace joined after this machine was
-  linked; it resumes from what that workspace already has, like /beezi-dev-sync. Relay it; when history
-  did not arrive, offer /beezi-dev-sync.
+  With no such `question=` line, ask each `<offer>` block inside it as above.
+
+In `mode=argument-only`, ask nothing: only the `<upload>` workspaces upload. Write every block's lines
+as above, up to each `question=`, then decline the rest: for an `<offers>` block with a
+`decline-all-command=`, run that text EXACTLY once and none of its `decline-command=` lines; otherwise
+take each `<offer>` block, then run its `decline-command=` text EXACTLY. Write each line verbatim. This
+overrides "a skipped question runs nothing" above.
+
+Never answer the question yourself, never run an `accept-command=` without "Upload now" or an
+`accept-all-command=` without the `all-choice=` answer, and never add or suggest `--force`, `--since`
+or `--dry-run`.
 
 If the Beezi tools are still missing afterwards, they appear within about 15 seconds; if not, run
 /restart.

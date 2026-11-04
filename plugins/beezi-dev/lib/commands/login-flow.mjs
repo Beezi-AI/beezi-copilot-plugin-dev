@@ -21,8 +21,6 @@ import { rules } from './workspace/rules.mjs';
 
 const FROM_STEPS = ['setup', 'here', 'plan', 'default', 'joined', 'routes'];
 const USAGE = `Usage: login-flow.mjs [--account <ref> --from <${FROM_STEPS.join('|')}>]`;
-// Writes made between calls leave the upload to the skill's own backfill step.
-const DEFER = { deferUpload: true, deps: {} };
 
 function block(tag, result) {
   const text = `${result.stdout}${result.stderr ? `\n${result.stderr}` : ''}`.trim();
@@ -91,8 +89,8 @@ const STOPS = {
   plan: planStops,
   // login.mjs names the analytics reader exactly when it is another account.
   default: async (row) => (await getDefaultKey()) !== row.key,
-  joined: async (row, deps) => (await listing('joined', row.key, () => deps.lists.joined(['--account', row.key], DEFER))) > 0,
-  routes: async (row, deps) => (await listing('routes', row.key, () => deps.lists.routes(['--account', row.key], DEFER))) > 0,
+  joined: async (row, deps) => (await listing('joined', row.key, () => deps.lists.joined(['--account', row.key]))) > 0,
+  routes: async (row, deps) => (await listing('routes', row.key, () => deps.lists.routes(['--account', row.key]))) > 0,
 };
 
 // From `from` on, the first step that needs a question; 'backfill' when none does.

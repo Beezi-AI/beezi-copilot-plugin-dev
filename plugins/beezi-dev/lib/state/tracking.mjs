@@ -58,16 +58,6 @@ export function allowsLiveFor(session, state) {
   return isLiveTrackingAllowed(state);
 }
 
-// Mirrors the server's derivation: every mode except `disabled` is offered the one-time pull
-// until it completes — paid tenants included, not just audit ones. A null mode means a
-// pre-audit server: it has no backfill routes, so no hint.
-export function shouldBackfill(state) {
-  if (!state) return false;
-  if (state.trackingMode == null) return false;
-  if (state.backfillCompleted === true) return false;
-  return state.trackingMode !== TrackingMode.DISABLED;
-}
-
 // The state is per account but the server's pull record is per (tenant, user, tool): a
 // logout→login into another workspace must not inherit the previous one's flags. The OAuth
 // client id changes on every login (dynamic registration), so it is the natural binding key;

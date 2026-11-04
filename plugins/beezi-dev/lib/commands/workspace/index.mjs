@@ -8,17 +8,13 @@ import { newFolders } from './new-folders.mjs';
 import { read } from './read.mjs';
 import { places } from './places.mjs';
 import { undo } from './undo.mjs';
-import { takeDeferFlag } from '../../history/pending-trigger.mjs';
 
 const SUBCOMMANDS = { rules, rule, routes, joined, 'new-folders': newFolders, read, places, undo };
 
-// --defer-upload is taken from anywhere in argv once, here, and reaches the handlers as cx.deferUpload.
-export async function runWorkspace(argv, deps = {}) {
-  const taken = takeDeferFlag(argv);
-  const cx = { deferUpload: taken.deferUpload, deps };
-  const [cmd, ...rest] = taken.argv;
+export async function runWorkspace(argv) {
+  const [cmd, ...rest] = argv;
   if (cmd != null && Object.prototype.hasOwnProperty.call(SUBCOMMANDS, cmd)) {
-    await SUBCOMMANDS[cmd](rest, cx);
+    await SUBCOMMANDS[cmd](rest);
     return;
   }
   throw new UserError(cmd == null ? USAGE : `Unknown command "${cmd}". ${USAGE}`);

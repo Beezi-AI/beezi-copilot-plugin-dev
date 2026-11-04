@@ -14,6 +14,8 @@ export const AccountStatus = Object.freeze({ LINKED: 'linked', REVOKED: 'revoked
 
 // The UserError message for a key with no row, so a caller can tell it from the lock and unreadable-index errors.
 export const NO_SUCH_ACCOUNT = 'No such linked account.';
+// The UserError message for an index-lock timeout, so a caller can skip one write and carry on.
+export const INDEX_LOCK_BUSY = 'Accounts are being updated by another Beezi process. Try again.';
 
 export function newAccountKey() {
   return crypto.randomBytes(4).toString('hex');
@@ -40,9 +42,9 @@ function writeIndex(index) {
 }
 
 // The same pid/start-time/nonce lock discipline as credential writes, including crash recovery.
-async function withIndexLock(fn) {
+export async function withIndexLock(fn) {
   const lock = await acquireCredentialLock({ index: true, waitMs: INDEX_LOCK_WAIT_MS });
-  if (!lock) throw new UserError('Accounts are being updated by another Beezi process. Try again.');
+  if (!lock) throw new UserError(INDEX_LOCK_BUSY);
   try {
     if (fs.existsSync(accountsIndexFile()) && !normalize(readJson(accountsIndexFile(), null))) {
       throw new UserError('The Beezi accounts index is unreadable. Restore accounts.json before changing linked accounts.');
@@ -98,6 +100,8 @@ export function addAccount(row) {
       tenantId: row.tenantId == null ? null : row.tenantId,
       tenantName: row.tenantName == null ? null : row.tenantName,
       tenants: Array.isArray(row.tenants) ? row.tenants : null,
+      anonymization: row.anonymization == null ? null : row.anonymization,
+      pastSessions: row.pastSessions == null ? null : row.pastSessions,
       newFolders: row.newFolders != null && typeof row.newFolders === 'object' ? row.newFolders : null,
       workspaceRules: Array.isArray(row.workspaceRules) ? row.workspaceRules : [],
       clientId: row.clientId == null ? null : row.clientId,
@@ -117,7 +121,7 @@ export function updateAccount(key, patch) {
     const index = await readIndex();
     const row = index.accounts.find((a) => a.key === key);
     if (!row) return index;
-    for (const field of ['email', 'name', 'tenantId', 'tenantName', 'tenants', 'newFolders', 'workspaceRules', 'clientId', 'linkedAt', 'status']) {
+    for (const field of ['email', 'name', 'tenantId', 'tenantName', 'tenants', 'anonymization', 'pastSessions', 'newFolders', 'workspaceRules', 'clientId', 'linkedAt', 'status']) {
       if (patch[field] == null) continue;
       row[field] = field === 'email' ? String(patch[field]).toLowerCase() : patch[field];
     }

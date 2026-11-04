@@ -1,4 +1,4 @@
-// What backfill and sync share: the history run with its progress line, the per-workspace loop, outcome printing and the fatal exit.
+// The history commands' shared pieces: backfill's dry run with its progress line, the per-workspace loop, outcome printing and the fatal exit.
 import { runAudit } from '../../history/history-run.mjs';
 import { progressLine, runHeader } from '../../ux/history-messages.mjs';
 

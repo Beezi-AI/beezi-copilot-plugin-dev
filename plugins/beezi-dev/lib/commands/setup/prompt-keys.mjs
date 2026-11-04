@@ -169,11 +169,11 @@ export function togglePick(picked, i, exclusive) {
   return picked.filter((j) => exclusive.indexOf(j) === -1).concat([i]);
 }
 
-export function keyChooseMany(p, question, options, exclusive) {
+export function keyChooseMany(p, question, options, exclusive, initial) {
   let cursor = 0;
   let run = '';
   let runStart = [];
-  let picked = [];
+  let picked = initial;
   return keyQuestion(p, question, () => menuRows(p, question, options, cursor, picked, HINT_MANY), (str, key, finish) => {
     if (isSubmit(key)) {
       const chosen = picked.slice().sort((a, b) => a - b);

@@ -3,9 +3,15 @@ import { apiBase, ENDPOINTS } from '../config/api.mjs';
 import { postJson } from '../platform/http.mjs';
 import { resolveFetch } from '../platform/compat-fetch.mjs';
 import { isPlain } from '../core/guards.mjs';
+import { anonymizationFor, hasKind } from '../core/anon-target.mjs';
+import { scrubSessionError } from '../core/anonymize-payload.mjs';
 import { REPORT_OUTCOME, classifyReportResponse } from './report-verdicts.mjs';
 
 export const MAX_PENDING_ERRORS = 20;
+
+export function scrubsErrorsFor(session) {
+  return hasKind(anonymizationFor(session, session.tenantId), 'sessions');
+}
 
 // POST one session-error record to Beezi. Fire-and-forget by convention; callers
 // swallow the result. Returns { reported, status? , reason? }.
@@ -16,7 +22,8 @@ export async function postSessionError(payload, session, deps = {}) {
   try {
     // timeoutMs is undefined for every hook caller, so postJson keeps its 3s default; the bulk
     // import raises it, having no 10s hook budget to protect.
-    const res = await postJson(`${apiBase()}${ENDPOINTS.sessionErrors}`, session, payload, { fetchImpl, timeoutMs: deps.timeoutMs });
+    const body = scrubsErrorsFor(session) ? scrubSessionError(payload) : payload;
+    const res = await postJson(`${apiBase()}${ENDPOINTS.sessionErrors}`, session, body, { fetchImpl, timeoutMs: deps.timeoutMs });
     return { reported: res.status >= 200 && res.status < 300, status: res.status };
   } catch {
     return { reported: false, reason: 'network' };
@@ -51,9 +58,14 @@ export function dedupeErrors(list) {
   return out;
 }
 
-// The parked list after adding `more`: deduped, newest MAX_PENDING_ERRORS kept.
-export function parkErrors(pending, more) {
-  return dedupeErrors([...pending, ...more]).slice(-MAX_PENDING_ERRORS);
+// The errors without their text fields when `scrub` (a run with any target hiding sessions), else unchanged.
+export function scrubbedIf(list, scrub) {
+  return scrub ? list.map(scrubSessionError) : list;
+}
+
+// The parked list after adding `more`: text fields dropped when `scrub`, deduped, newest MAX_PENDING_ERRORS kept.
+export function parkErrors(pending, more, scrub = false) {
+  return dedupeErrors(scrubbedIf([...pending, ...more], scrub)).slice(-MAX_PENDING_ERRORS);
 }
 
 // Posts each error to every target while time is left; → { delivered: Set of errorKey, undelivered (newest kept) }.

@@ -14,9 +14,6 @@ const LABEL_END = /\), \d+ sessions?\b/;
 const PLAIN_PLACE = /^(.*?), \d+ sessions?\b/;
 const NO_FOLDER = /^\d+ other past sessions? ha(?:s|ve) no recorded folder and (?:is|are) not sent\.$/;
 const JOINED_NAMES = / you joined (.+) — \d+ repos? or folders? to review account=/;
-const CONSENT = ' Their past sessions will be sent there too.';
-// Writes leave the upload to the wizard's backfill that follows.
-export const DEFER = '--defer-upload';
 export const NONE_OF_THESE = 'None of these';
 
 export function parseWorkspaces(text) {
@@ -101,21 +98,19 @@ function targetArgs(place) {
   return place.kind === 'outside' ? ['--outside'] : [`--${place.kind}`, place.match];
 }
 
-// rule add in the order the routes listing prints it: <target> --account <key> --defer-upload <tenants>.
+// rule add in the order the routes listing prints it: <target> --account <key> <tenants>.
 export function ruleArgv(place, key, tenants) {
-  return ['rule', 'add'].concat(targetArgs(place), ['--account', key, DEFER, tenants]);
+  return ['rule', 'add'].concat(targetArgs(place), ['--account', key, tenants]);
 }
 
-// joined pick in the order the joined listing prints it: <target> --account <key> --defer-upload <tenant>.
+// joined pick in the order the joined listing prints it: <target> --account <key> <tenant>.
 export function pickArgv(place, key, tenant) {
-  return ['joined', 'pick'].concat(targetArgs(place), ['--account', key, DEFER, tenant]);
+  return ['joined', 'pick'].concat(targetArgs(place), ['--account', key, tenant]);
 }
 
 async function runAndReport(ctx, argv) {
   report(ctx, await ctx.run('workspace', argv));
 }
-
-const plural = (n, one, many) => (n === 1 ? `1 ${one}` : `${n} ${many}`);
 
 // The `history=<N> places=<M>` counts, or null when the line is missing or malformed.
 export function parseHistory(text) {
@@ -126,19 +121,15 @@ export function parseHistory(text) {
 
 // One option per workspace, each sending everything there, then the several-workspaces and per-repo options.
 export function setupOptions(workspaces, history) {
-  const sessions = history === null ? '' : plural(history.sessions, 'past session', 'past sessions');
-  let description = 'Everything goes here, starting with new repos and folders';
-  if (history !== null && history.sessions > 0) {
-    description = history.places > 0
-      ? `Everything goes here: new repos and folders, and ${history.places} with history (${sessions})`
-      : `Everything goes here: new repos and folders, and ${sessions}`;
-  }
+  const description = history !== null && history.places > 0
+    ? `Everything goes here: new repos and folders, and the ${history.places} you've worked in before`
+    : 'Everything goes here, starting with new repos and folders';
   return workspaces.map((w) => ({ label: w.name, description })).concat([SEVERAL, PER_REPO]);
 }
 
 // One question: a workspace, several workspaces (a follow-up multi-pick), or per repo; a dismissed follow-up runs nothing.
 export async function askNewFolders(ctx, key) {
-  const listing = await ctx.run('workspace', ['new-folders', '--history', '--account', key, DEFER]);
+  const listing = await ctx.run('workspace', ['new-folders', '--history', '--account', key]);
   if (listing.code !== 0) {
     report(ctx, listing);
     return;
@@ -149,12 +140,12 @@ export async function askNewFolders(ctx, key) {
   const choice = await ctx.ask.choose(SETUP_QUESTION, setupOptions(workspaces, parseHistory(listing.stdout)), { defaultIndex: 0 });
   if (choice === null) return;
   if (choice === workspaces.length + 1) {
-    await runAndReport(ctx, ['new-folders', 'ask', '--account', key, DEFER]);
+    await runAndReport(ctx, ['new-folders', 'ask', '--account', key]);
     return;
   }
   const picked = choice === workspaces.length ? await ctx.ask.chooseMany(SEVERAL_QUESTION, workspaceOptions(workspaces)) : [choice];
   if (picked === null || picked.length === 0) return;
-  await runAndReport(ctx, ['new-folders', 'send', tenantsArg(picked, workspaces), '--account', key, DEFER]);
+  await runAndReport(ctx, ['new-folders', 'send', tenantsArg(picked, workspaces), '--account', key]);
 }
 
 // One question per place; a place with an empty or dismissed pick gets no rule.
@@ -182,7 +173,7 @@ async function askReposForTenant(ctx, key, tenant, places) {
     const batch = places.slice(i, i + 4);
     const part = parts > 1 ? ` (part ${i / 4 + 1} of ${parts})` : '';
     const options = batch.map((p) => ({ label: p.short, description: p.where === 'no rule yet' ? 'No rule yet' : `Now: ${p.where}` })).concat([none]);
-    const question = `Which repos and folders should also send analytics to ${name}?${CONSENT}${part}`;
+    const question = `Which repos and folders should also send analytics to ${name}?${part}`;
     const picked = await ctx.ask.chooseMany(question, options, { exclusive: [batch.length] });
     if (picked === null || picked.length === 0) return false;
     if (picked.indexOf(batch.length) === -1) {
@@ -193,7 +184,7 @@ async function askReposForTenant(ctx, key, tenant, places) {
 }
 
 export async function reviewJoined(ctx, key) {
-  const listing = await ctx.run('workspace', ['joined', '--account', key, DEFER]);
+  const listing = await ctx.run('workspace', ['joined', '--account', key]);
   if (listing.code !== 0) {
     report(ctx, listing);
     return;
@@ -205,21 +196,21 @@ export async function reviewJoined(ctx, key) {
   if (places.length > 4) {
     const names = joinedNames(listing.stdout, workspaces);
     const n = places.length;
-    const choice = await ctx.ask.choose(`You joined ${names}. Where should analytics for these ${n} repos and folders go?${CONSENT}`, [
+    const choice = await ctx.ask.choose(`You joined ${names}. Where should analytics for these ${n} repos and folders go?`, [
       { label: `Add ${names} to all ${n}`, description: "Repos you don't track, and ones with no rule yet, stay as they are" },
       { label: 'Choose repos', description: 'Pick which repos and folders go to each new workspace' },
       { label: 'Leave them as they are', description: `Nothing changes, and you're not asked about ${names} again` },
     ]);
-    if (choice === 0) { await runAndReport(ctx, ['joined', 'add-all', '--account', key, DEFER]); return; }
-    if (choice === 2) { await runAndReport(ctx, ['joined', 'done', '--account', key, DEFER]); return; }
+    if (choice === 0) { await runAndReport(ctx, ['joined', 'add-all', '--account', key]); return; }
+    if (choice === 2) { await runAndReport(ctx, ['joined', 'done', '--account', key]); return; }
     if (choice !== 1) return;
   }
   for (let i = 0; i < newTenants.length; i += 1) if (!(await askReposForTenant(ctx, key, newTenants[i], places))) return;
-  await runAndReport(ctx, ['joined', 'done', '--account', key, DEFER]);
+  await runAndReport(ctx, ['joined', 'done', '--account', key]);
 }
 
 export async function reviewRoutes(ctx, key) {
-  const listing = await ctx.run('workspace', ['routes', '--account', key, DEFER]);
+  const listing = await ctx.run('workspace', ['routes', '--account', key]);
   if (listing.code !== 0) {
     report(ctx, listing);
     return;
@@ -239,7 +230,7 @@ export async function reviewRoutes(ctx, key) {
     if (choice === 0) {
       const picked = await ctx.ask.chooseMany(`Which workspaces should get analytics for these ${n} repos and folders?`, workspaceOptions(workspaces));
       if (picked !== null && picked.length > 0) {
-        await runAndReport(ctx, ['rule', 'add-all', '--account', key, DEFER, tenantsArg(picked, workspaces)]);
+        await runAndReport(ctx, ['rule', 'add-all', '--account', key, tenantsArg(picked, workspaces)]);
       }
     }
     if (choice !== 1) return;
