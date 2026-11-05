@@ -4,7 +4,8 @@ import path from 'path';
 import { isUsableSessionId } from '../../core/session-id.mjs';
 import { modelName as billedModelName } from '../../core/model-names.mjs';
 import { SESSION_FILE, sessionFileLocation } from './session-files.mjs';
-import { replaySessionText, promptTokensSeenOf } from './patch-replay.mjs';
+import { replaySessionText, sessionReplayer, promptTokensSeenOf } from './patch-replay.mjs';
+import { scanLines } from '../../platform/log-scan.mjs';
 import { isPlain, str } from '../../core/guards.mjs';
 
 const MODEL_PREFIX = /^copilot\//i;
@@ -22,10 +23,14 @@ function nonNeg(v) {
   return typeof v === 'number' && isFinite(v) && v >= 0 ? v : null;
 }
 
-// The session's full state rebuilt from the file, or null; see replaySessionText.
+// The session's full state rebuilt from the file, or null: .jsonl streamed line by line, the legacy .json parsed whole.
+// A .json past Node's string limit fails to decode and is unreadable like any other.
 export function replayVscodeSession(file) {
   try {
-    return replaySessionText(fs.readFileSync(file, 'utf8'), /\.json$/i.test(file));
+    if (/\.json$/i.test(file)) return replaySessionText(fs.readFileSync(file, 'utf8'), true);
+    const replay = sessionReplayer();
+    scanLines(file, (text) => replay.line(text));
+    return replay.result();
   } catch {
     return null;
   }

@@ -19,10 +19,14 @@ export function ownSessionFacts(sessionId, events, appFacts) {
   };
 }
 
+function eventsOf(transcriptPath) {
+  const read = readEvents(transcriptPath);
+  return read.unreadable ? [] : read.events;
+}
+
 // → { events, at, byok, surface } where surface is the creating client's `source` (sessionSurface over every line, as live).
-export async function readSessionFacts(entry) {
-  const read = readEvents(entry.transcriptPath);
-  const events = read.unreadable ? [] : read.events;
+// `events`, when given, are the transcript's events already read; else the transcript is read here.
+export async function readSessionFacts(entry, events = eventsOf(entry.transcriptPath)) {
   const appFacts = await appSessionFacts(entry.sessionId);
   const surface = sessionSurface(entry.sessionId, entry.transcriptPath, events, appFacts != null).source;
   return { ...ownSessionFacts(entry.sessionId, events, appFacts), surface };

@@ -1,4 +1,4 @@
-// history-worker.mjs: uploads the history a rule change owes a workspace; the history lease keeps it to one run at a time.
+// history-worker.mjs: uploads the past sessions a workspace's accepted offer owes it; the history lease keeps it to one run at a time.
 import { runPendingHistory } from '../history/pending-history-run.mjs';
 import { exitClean } from '../platform/exit.mjs';
 

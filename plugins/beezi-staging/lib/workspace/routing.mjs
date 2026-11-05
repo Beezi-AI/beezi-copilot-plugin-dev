@@ -4,6 +4,7 @@ import { rulesOf, usesRules } from './rule-model.mjs';
 import { tenantsOf } from './tenants.mjs';
 import { createRouteContext, isUnsafeKeyPath, mainTreePath, routeKeyForDir } from './route-key.mjs';
 import { initSessionWorkspace } from './session-routes.mjs';
+import { newFoldersOf } from './targets.mjs';
 
 // The rule this directory follows: the repo rule for its remote, else the longest folder prefix, else (home or above, /, temp or app chats only) the outside rule; tenantIds limited to current workspaces.
 export function routeForDir(row, dir, ctx) {
@@ -67,4 +68,19 @@ export function bindSessionRoutes(sessionId, cwd, rows, ctx) {
   } catch {
     return null;
   }
+}
+
+// Where a place sends today: its rule (unless every workspace it names was left), else New folders, else under Ask me the one workspace the account had before the new ones, else pending.
+export function placeNow(row, place, newIds) {
+  const members = (tenantsOf(row) || []).map((t) => t.id);
+  for (const rule of rulesOf(row)) {
+    if (rule.kind !== place.kind || rule.match !== place.match) continue;
+    const ids = rule.tenantIds.filter((id) => members.indexOf(id) !== -1);
+    if (rule.tenantIds.length === 0 || ids.length > 0) return { ids, pending: false };
+  }
+  const newFolders = newFoldersOf(row);
+  if (newFolders.mode === 'send') return { ids: newFolders.tenantIds, pending: false };
+  if (newFolders.mode === 'none') return { ids: [], pending: false };
+  const before = members.filter((id) => newIds.indexOf(id) === -1);
+  return before.length === 1 ? { ids: before, pending: false } : { ids: [], pending: true };
 }

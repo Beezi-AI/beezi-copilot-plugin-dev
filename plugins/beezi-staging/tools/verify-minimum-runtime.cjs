@@ -8,7 +8,7 @@ const { pathToFileURL } = require('url');
 
 const root = path.resolve(__dirname, '..');
 // Floors per folder, so a walk that misses moved or nested modules fails instead of passing on fewer files.
-const MIN_MODULES = { lib: 221, scripts: 27 };
+const MIN_MODULES = { lib: 229, scripts: 28 };
 // Matched against code with comments and literal bodies blanked; each names the Node 13.2 floor rule it enforces.
 const BANNED = [
   ['optional chaining ?.', /\?\.(?!\d)/g],

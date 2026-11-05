@@ -7,7 +7,6 @@ import { resolveFetch } from '../platform/compat-fetch.mjs';
 import { copilotSessionFile } from '../config/copilot-paths.mjs';
 import { recordIssue, rememberHostVersion } from '../telemetry/recorder.mjs';
 import { DIAGNOSTIC_CODES, DIAGNOSTIC_SOURCES } from '../contract/diagnostic-codes.mjs';
-import { MAX_TRANSCRIPT_BYTES } from '../contract/report-limits.mjs';
 import { validError } from '../delivery/session-errors.mjs';
 import { EVENT_TYPES, sessionStartOf } from '../sources/cli/event-types.mjs';
 import { readEvents } from '../sources/cli/events.mjs';
@@ -40,10 +39,6 @@ function ownProcess(ctx) {
 
 function isFile(p) {
   try { return typeof p === 'string' && p !== '' && fs.statSync(p).isFile(); } catch { return false; }
-}
-
-function isOversize(p) {
-  try { return fs.statSync(p).size > MAX_TRANSCRIPT_BYTES; } catch { return false; }
 }
 
 // The Copilot version on the newest session.start: the closest record of the host that is running now.
@@ -122,10 +117,9 @@ function locateTranscript(ctx) {
   }
   ctx.transcript = transcript;
   // One read serves the binding gate and the window when the gate runs; otherwise the window reads under the lock.
-  // A transcript over the cap is never parsed on a hook (null): the watcher and history skip it the same way.
   let read;
   ctx.readOnce = () => {
-    if (read === undefined) read = transcript == null || isOversize(transcript) ? null : readEvents(transcript);
+    if (read === undefined) read = transcript == null ? null : readEvents(transcript);
     return read;
   };
   let head;
@@ -188,9 +182,10 @@ function takeErrorWindow(ctx) {
 // A file that could not be read looks empty, and an empty file must not be taken for a rewound cursor.
 async function readTranscript(ctx) {
   const read = ctx.readOnce();
-  if (read == null) return stopRun('deferred', 'transcript-oversize', true);
   if (read.unreadable) return stopRun('failed', 'no-transcript', true);
   ctx.events = read.events;
+  // History reuses this read for the same file instead of reading it again.
+  ctx.out.transcriptRead = { path: ctx.transcript, events: read.events };
   // A lagging recipient's replay ends at the line the other recipients start from.
   const end = ctx.options.endCursor;
   ctx.capped = Number.isInteger(end) && end >= 0 && end < read.lastCompleteLine;

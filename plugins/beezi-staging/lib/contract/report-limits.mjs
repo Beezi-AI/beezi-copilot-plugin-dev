@@ -9,6 +9,3 @@ export const BRANCH_MAX = 255;
 export const AGENT_NAME_MAX = 200;
 export const AGENT_TYPE_MAX = 100;
 export const SEGMENT_ID_MAX = 200;
-
-// The largest events.jsonl any path parses: hooks, the watcher and history all leave a bigger one alone.
-export const MAX_TRANSCRIPT_BYTES = 64 * 1024 * 1024;

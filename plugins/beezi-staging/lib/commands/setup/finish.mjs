@@ -1,15 +1,20 @@
-// The last steps of the terminal setup: the default account, the history upload, crash reports and the status line.
+// The last steps of the terminal setup: the default account, the past-sessions offer, crash reports and the status line.
 import { usableAccounts } from './account.mjs';
-import { lastLine, report, reportAll, token } from './output.mjs';
+import { humanLines, lastLine, outputLines, report, reportAll, token } from './output.mjs';
+import { SYNC_COMMAND } from '../../ux/history-offer-lines.mjs';
 
-export const FINALIZED = 'your history pull is finalized.';
-export const FINALIZE_NOTE = 'Run /beezi-staging-login on your other machines too, before their history import is finalized.';
 export const DEFAULT_UNCHANGED = 'The default account is unchanged. /beezi-staging-settings account switches it later.';
 export const CRASH_QUESTION = 'How should Beezi crash reports work?';
 export const STATUS_LINE_QUESTION = "Show Beezi in the Copilot CLI's status line?";
-export const UPLOAD_LABEL = 'Uploading past sessions…';
-// backfill.mjs prints this once per batch; the setup shows it on the activity line instead.
-export const UPLOAD_PROGRESS = /^Beezi: (\d+)\/(\d+) sessions read…$/;
+const OFFER_OPEN = /^<offer account="[^"]*" tenant="([^"]*)">$/;
+const OFFER_CLOSE = '</offer>';
+const GROUP_OPEN = /^<(upload|offers) account="[^"]*"(?: tenant="[^"]*")?>$/;
+const GROUP_CLOSE = /^<\/(?:upload|offers)>$/;
+const ASK_ROW = /^ {4}\? (.+?) · (.+)$/;
+const QUESTION = 'question=';
+const OFFER_TOKEN = /^accept-command=.* --offer ([0-9a-f]+)(?: |$)/;
+export const UPLOAD_OPTIONS = [{ label: 'Upload now' }, { label: 'Not now', description: `run ${SYNC_COMMAND} any time` }];
+export const NONE_OPTION = { label: 'Not now', description: `Nothing more is uploaded. Run ${SYNC_COMMAND} any time.` };
 const CRASH_OPTIONS = [
   { label: 'Correlate (recommended)', description: 'Crash reports with an installation ID, so support can find yours', mode: 'correlate' },
   { label: 'On', description: 'Crash reports without an installation ID', mode: 'on' },
@@ -17,9 +22,87 @@ const CRASH_OPTIONS = [
   { label: 'Anonymous', description: 'Stay on, and delete the installation ID and the reports that carry it', mode: 'anonymous' },
 ];
 
+// A history-offer scan's output: its <upload> blocks' and <offers> block's human lines (the latter with its question or null),
+// every <offer> block, nested or not, as { tenant, lines, question, token }, and the person's lines outside them (notes).
+export function parseOffers(text) {
+  const uploads = [];
+  const offers = [];
+  const outside = [];
+  let combined = null;
+  let group = null;
+  let open = null;
+  outputLines(text).forEach((line) => {
+    const head = OFFER_OPEN.exec(line);
+    const groupHead = GROUP_OPEN.exec(line);
+    if (head !== null) open = { tenant: head[1], lines: [], question: null, token: null };
+    else if (groupHead !== null) {
+      group = { lines: [], question: null };
+      if (groupHead[1] === 'upload') uploads.push(group);
+      else combined = group;
+    } else if (GROUP_CLOSE.test(line)) group = null;
+    else if (open === null && group === null) outside.push(line);
+    else if (open === null && line.indexOf(QUESTION) === 0) group.question = line.slice(QUESTION.length);
+    else if (open === null) group.lines.push(...humanLines(line));
+    else if (line === OFFER_CLOSE) {
+      offers.push(open);
+      open = null;
+    } else if (line.indexOf(QUESTION) === 0) open.question = line.slice(QUESTION.length);
+    else if (OFFER_TOKEN.test(line)) open.token = OFFER_TOKEN.exec(line)[1];
+    else if (open.question === null) open.lines.push(line);
+  });
+  return { uploads, combined, offers, notes: humanLines(outside.join('\n')) };
+}
+
+// The "    ? W · N sessions · hides" rows as options: the workspace as label, the rest as description.
+function askOptions(lines) {
+  return lines.map((line) => ASK_ROW.exec(line)).filter((row) => row !== null)
+    .map((row) => ({ label: row[1], description: row[2] }));
+}
+
+function answerTarget(key, offers) {
+  return ['--account', key, '--tenant', offers.map((offer) => offer.tenant).join(',')];
+}
+
+// One pre-ticked multi-select for every asked workspace plus a last exclusive "Not now": the ticked workspaces accept in one run,
+// the rest (all on "Not now" or no answer) decline in one.
+async function answerCombined(ctx, key, question, offers, options) {
+  const opts = { picked: offers.map((offer, i) => i), exclusive: [options.length] };
+  const picked = await ctx.ask.chooseMany(question, options.concat([NONE_OPTION]), opts);
+  const ticked = picked === null ? [] : picked;
+  const accepted = offers.filter((offer, i) => ticked.indexOf(i) !== -1);
+  const declined = offers.filter((offer, i) => ticked.indexOf(i) === -1);
+  if (accepted.length > 0) {
+    const tokens = accepted.map((offer) => offer.token).join(',');
+    reportAll(ctx, await ctx.run('history-offer', ['accept', ...answerTarget(key, accepted), '--offer', tokens]));
+  }
+  if (declined.length > 0) reportAll(ctx, await ctx.run('history-offer', ['decline', ...answerTarget(key, declined)]));
+}
+
+// Each block's lines styled by line shape; 2+ asked workspaces get one pre-ticked multi-select, else each offer a menu on
+// "Upload now"; only that row accepts, and no answer declines.
 export async function uploadHistory(ctx, key) {
-  const result = await ctx.run('backfill', ['--account', key, '--via', 'login'], { stream: true, label: UPLOAD_LABEL, live: UPLOAD_PROGRESS });
-  if (result.stdout.indexOf(FINALIZED) !== -1) ctx.print(FINALIZE_NOTE);
+  const scan = await ctx.run('history-offer', ['--via', 'setup', '--account', key]);
+  const { uploads, combined, offers, notes } = parseOffers(scan.stdout);
+  const printGroups = () => uploads.concat(combined === null ? [] : [combined]).forEach((group) => group.lines.forEach((line) => ctx.printOffer(line)));
+  // A scan that fails after printing a block still shows what it uploads, then the error from its other lines.
+  if (scan.code !== 0) {
+    printGroups();
+    report(ctx, { ...scan, stdout: notes.join('\n') });
+    return;
+  }
+  notes.forEach((line) => ctx.print(line));
+  printGroups();
+  if (combined !== null && combined.question !== null) {
+    await answerCombined(ctx, key, combined.question, offers, askOptions(combined.lines));
+    return;
+  }
+  for (const offer of offers) {
+    offer.lines.forEach((line) => ctx.printOffer(line));
+    const target = ['--account', key, '--tenant', offer.tenant];
+    const picked = await ctx.ask.choose(offer.question, UPLOAD_OPTIONS, { defaultIndex: 0 });
+    const answer = picked === 0 ? ['accept', ...target, '--offer', offer.token] : ['decline', ...target];
+    reportAll(ctx, await ctx.run('history-offer', answer));
+  }
 }
 
 // login Step 4: asked only when the sign-in left another account as the default reader.

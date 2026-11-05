@@ -97,9 +97,8 @@ export function newFoldersConfirmation(row, mode, tenantIds) {
   return confirmation(`${DONE}New folders: Ask me — Beezi asks once per repo or folder.`);
 }
 
-// The undo hint is left off when the calling flow uploads next (login, setup).
-export function withUndoHint(line, defer) {
-  return defer ? line : `${line}${UNDO_HINT}`;
+export function withUndoHint(line) {
+  return `${line}${UNDO_HINT}`;
 }
 
 export const UNDO_NOTHING = 'Nothing to undo.';
@@ -129,19 +128,14 @@ export function commandLine(name, args) {
   return machineLine([[name, `node "${pluginRoot()}/scripts/workspace.mjs" ${args}`]]);
 }
 
-// ` --defer-upload` for a printed command whose caller uploads next, else nothing; it goes right after `--account <key>`.
-export function deferSuffix(defer) {
-  return defer ? ' --defer-upload' : '';
-}
-
 // The command that answers one place with a rule.
-export function ruleAddCommandLine(name, place, row, defer = false) {
-  return commandLine(name, `rule add ${ruleTargetFlag(place)} --account ${row.key}${deferSuffix(defer)} <tenants>`);
+export function ruleAddCommandLine(name, place, row) {
+  return commandLine(name, `rule add ${ruleTargetFlag(place)} --account ${row.key} <tenants>`);
 }
 
 // The command that adds one newly-joined workspace to a place.
-export function joinedPickCommandLine(name, place, row, defer = false) {
-  return commandLine(name, `joined pick ${ruleTargetFlag(place)} --account ${row.key}${deferSuffix(defer)} <tenant>`);
+export function joinedPickCommandLine(name, place, row) {
+  return commandLine(name, `joined pick ${ruleTargetFlag(place)} --account ${row.key} <tenant>`);
 }
 
 // The workspaces to offer, one line each; with `newIds`, new= says which were just joined. role= is last and may be empty.

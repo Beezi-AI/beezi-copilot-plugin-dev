@@ -1,5 +1,5 @@
 // Buckets each Copilot tool call in a segment into seven categories and estimates its result size (result bytes / 4).
-import { EVENT_TYPES, dataOf, isSkillInvocation } from '../../sources/cli/event-types.mjs';
+import { EVENT_TYPES, bytesOf, dataOf, isSkillInvocation } from '../../sources/cli/event-types.mjs';
 
 // Claude tool name per Copilot runtime name (hooks reference, PascalCase table) plus shell-session tools.
 const CLAUDE_NAME = {
@@ -105,19 +105,12 @@ function skillPluginOf(skillId) {
   return i <= 0 ? 'builtin' : keyOf(skillId.slice(0, i));
 }
 
-function bytesOf(v) {
-  if (typeof v === 'string') return Buffer.byteLength(v, 'utf-8');
-  if (v == null) return 0;
-  try { return Buffer.byteLength(JSON.stringify(v), 'utf-8'); } catch { return 0; }
-}
-
-// What the model read back: result.content, else structured blocks, else the error text.
+// What the model read back: the result's measured content (projectEventData), else the error text.
 function resultBytes(complete) {
   if (complete == null) return 0;
   const d = dataOf(complete);
   const r = d.result != null && typeof d.result === 'object' ? d.result : null;
-  if (r != null && typeof r.content === 'string') return bytesOf(r.content);
-  if (r != null && Array.isArray(r.contents)) return bytesOf(r.contents);
+  if (r != null && typeof r.contentBytes === 'number') return r.contentBytes;
   if (d.error != null && typeof d.error.message === 'string') return bytesOf(d.error.message);
   return 0;
 }

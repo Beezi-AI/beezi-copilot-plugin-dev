@@ -96,7 +96,11 @@ async function dispatchBatch(run, batch) {
   if (run.dryRun) {
     result.plannedReports += sum(batch, (g) => g.reports.length);
     result.plannedChunks += planChunks(batch).length;
-    for (const group of batch) run.followups.delete(group.sessionId);
+    const { onPlanned } = run.deps;
+    for (const group of batch) {
+      run.followups.delete(group.sessionId);
+      if (typeof onPlanned === 'function') onPlanned(group.sessionId);
+    }
     return;
   }
   // Before any network work, and the batch is dropped unsent on a lost lease so its sessions stay eligible.
@@ -129,7 +133,7 @@ async function dispatchBatch(run, batch) {
   if (flushed.halt) {
     if (result.halt === null) result.halt = flushed.halt;
     run.halted = true;
-    // The seal is the one-time import's, so a sync run leaves the local caches exactly as it found them.
+    // Only an older plugin's sealed pull answers this; a sync run leaves the local caches exactly as it found them.
     if (!run.syncMode && flushed.halt === BackfillHalt.ALREADY_COMPLETED) sealLocally(run);
     return;
   }

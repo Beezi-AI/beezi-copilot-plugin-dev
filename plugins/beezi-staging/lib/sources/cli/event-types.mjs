@@ -1,5 +1,5 @@
 // Owns the Copilot CLI events.jsonl vocabulary and the pure parsing and lookups over parsed events.
-import { str } from '../../core/guards.mjs';
+import { isPlain, str } from '../../core/guards.mjs';
 
 export const EVENT_TYPES = Object.freeze({
   SESSION_START: 'session.start',
@@ -59,6 +59,54 @@ export function isHumanPrompt(e) {
   return typeof d.content === 'string' && d.content.trim() !== '';
 }
 
+const BINARY_ASSET = 'session.binary_asset';
+// Payloads no consumer reads; every other field, and every other event type, passes through whole.
+const DROPPED_DATA = new Map([
+  [EVENT_TYPES.ASSISTANT_MESSAGE, ['content', 'reasoningText', 'reasoningOpaque', 'reasoningBlocks', 'encryptedContent', 'toolRequests']],
+  [EVENT_TYPES.USER_MESSAGE, ['attachments', 'transformedContent']],
+  [BINARY_ASSET, ['data']],
+]);
+const DROPPED_RESULT = ['binaryResultsForLlm', 'content', 'contents'];
+const DIFF_HUNK = /^@@ /m;
+
+export function bytesOf(v) {
+  if (typeof v === 'string') return Buffer.byteLength(v, 'utf-8');
+  if (v == null) return 0;
+  try { return Buffer.byteLength(JSON.stringify(v), 'utf-8'); } catch { return 0; }
+}
+
+// What the model read back, in bytes: content when a string, else contents when an array; else null.
+function readBackBytes(result) {
+  if (typeof result.content === 'string') return bytesOf(result.content);
+  return Array.isArray(result.contents) ? bytesOf(result.contents) : null;
+}
+
+function withoutKeys(obj, drop) {
+  const slim = {};
+  for (const key of Object.keys(obj)) if (!drop(key)) slim[key] = obj[key];
+  return slim;
+}
+
+export function isDiff(v) {
+  return typeof v === 'string' && DIFF_HUNK.test(v);
+}
+
+// detailedContent is kept only as a unified diff, the one shape code-changes reads it in; content becomes contentBytes.
+function projectResult(result) {
+  const slim = withoutKeys(result, (key) => DROPPED_RESULT.indexOf(key) !== -1 || (key === 'detailedContent' && !isDiff(result.detailedContent)));
+  const bytes = readBackBytes(result);
+  if (bytes != null) slim.contentBytes = bytes;
+  return slim;
+}
+
+export function projectEventData(type, data) {
+  if (type === EVENT_TYPES.TOOL_COMPLETE) {
+    return isPlain(data.result) ? Object.assign({}, data, { result: projectResult(data.result) }) : data;
+  }
+  const dropped = DROPPED_DATA.get(type);
+  return dropped == null ? data : withoutKeys(data, (key) => dropped.indexOf(key) !== -1);
+}
+
 // One physical line to an Event, or null for blank, malformed or non-record lines.
 export function parseEventLine(text, line) {
   if (typeof text !== 'string') return null;
@@ -76,7 +124,7 @@ export function parseEventLine(text, line) {
     parentId: str(rec.parentId),
     timestamp: str(rec.timestamp),
     agentId: str(rec.agentId),
-    data,
+    data: projectEventData(rec.type, data),
   };
 }
 
