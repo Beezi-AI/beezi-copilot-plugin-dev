@@ -1,6 +1,6 @@
 {
   "name": "beezi",
-  "version": "0.3.0-staging.6194",
+  "version": "0.4.0-staging.6284",
   "private": true,
   "type": "module",
   "description": "Beezi analytics plugin for GitHub Copilot.",

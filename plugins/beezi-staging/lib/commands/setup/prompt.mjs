@@ -4,7 +4,7 @@ import readline from 'readline';
 import stream from 'stream';
 import tty from 'tty';
 import { createStyle } from '../../ux/setup/style.mjs';
-import { keyChoose, keyChooseMany, keyConfirm } from './prompt-keys.mjs';
+import { OPTION_INDENT, QUESTION_INDENT, keyChoose, keyChooseMany, keyConfirm, leadRows, menuRows, questionRow } from './prompt-keys.mjs';
 
 function openDevTty() {
   return new tty.ReadStream(fs.openSync('/dev/tty', 'r'));
@@ -38,19 +38,6 @@ export function parseNumbers(answer, count) {
   return picked;
 }
 
-// Numbered option rows with the default mark and the descriptions dimmed.
-function styledOptions(options, defaultIndex, style) {
-  return options.map((option, i) => {
-    const mark = i === defaultIndex ? style.dim(' (default)') : '';
-    const description = option.description ? style.dim(` — ${option.description}`) : '';
-    return `  ${i + 1}) ${option.label}${mark}${description}`;
-  });
-}
-
-export function renderOptions(options, defaultIndex) {
-  return styledOptions(options, defaultIndex, createStyle({ enabled: false }));
-}
-
 // Feeds the line reader only the chunks that arrive while no key question is open.
 function gateLines(input, keyOpen) {
   const lines = new stream.PassThrough();
@@ -69,12 +56,13 @@ function settle(p, value) {
   resolve(value);
 }
 
-// The shared state: streams, style, whether keys are still read raw, the open key question's dismiss hook and the line reader.
+// The shared state: streams, style, the lead-line format, whether keys are still read raw, the open key question's dismiss hook and the line reader.
 function promptState(io) {
   const p = {
     input: io.input,
     output: io.output,
     style: io.style || createStyle({ enabled: false }),
+    format: io.format || ((line) => line),
     onInterrupt: io.onInterrupt || null,
     keys: Boolean(io.interactive),
     cancelKeys: null,
@@ -103,8 +91,12 @@ function ask(p, query) {
   return new Promise((resolve) => { p.waiting = resolve; });
 }
 
-function showMenu(p, question, options, defaultIndex) {
-  p.output.write(`\n${p.style.bold(question)}\n${styledOptions(options, defaultIndex, p.style).join('\n')}\n`);
+function showMenu(p, question, options, lead) {
+  const rows = options.map((option, i) => {
+    const description = option.description ? p.style.dim(`  ${option.description}`) : '';
+    return `${OPTION_INDENT}${i + 1}) ${option.label}${description}`;
+  });
+  p.output.write(`${leadRows(p, lead).concat('', questionRow(p, question), rows).join('\n')}\n`);
 }
 
 // Turns raw mode on for one key question; false, and typed prompts from then on, when keys are off or it throws.
@@ -119,76 +111,66 @@ function rawOn(p) {
   }
 }
 
-// True when count menu rows fit above the terminal's last row, or its height is unknown.
+// True when count rows fit above the terminal's last row, or its height is unknown.
 function fitsScreen(p, count) {
   return !p.output.rows || count < p.output.rows;
 }
 
+// Answers the 0-based option; Enter picks the first. opts.lead lines show above it and fold away with it.
 async function choose(p, question, options, opts) {
   if (p.closed) return null;
-  const defaultIndex = opts && typeof opts.defaultIndex === 'number' ? opts.defaultIndex : -1;
-  if (fitsScreen(p, options.length + 2) && rawOn(p)) return keyChoose(p, question, options, defaultIndex);
-  showMenu(p, question, options, defaultIndex);
-  const range = `1-${options.length}`;
-  const query = defaultIndex === -1 ? `Choose ${range}, or press Enter to skip:` : `Choose ${range} [${defaultIndex + 1}]:`;
+  const menu = { question, options, lead: opts && Array.isArray(opts.lead) ? opts.lead : [] };
+  if (fitsScreen(p, menuRows(p, menu, 0, null, 0).length) && rawOn(p)) return keyChoose(p, menu);
+  showMenu(p, question, options, menu.lead);
   for (;;) {
-    const answer = await ask(p, `${p.style.boldCyan(query)} `);
+    const answer = await ask(p, `${QUESTION_INDENT}${p.style.bold(`Choose 1-${options.length} [1]:`)} `);
     if (answer === null) return null;
-    if (answer === '') return defaultIndex === -1 ? null : defaultIndex;
+    if (answer === '') return 0;
     const picked = parseNumbers(answer, options.length);
     if (picked !== null && picked.length === 1) return picked[0];
-    p.output.write(`${p.style.yellow(`Enter one number from 1 to ${options.length}.`)}\n`);
+    p.output.write(`${QUESTION_INDENT}Enter one number from 1 to ${options.length}.\n`);
   }
 }
 
-// The exclusive index in picked when it sits beside another pick, else -1.
-export function mixedExclusive(picked, exclusive) {
-  const found = picked.find((i) => exclusive.indexOf(i) !== -1);
-  return picked.length > 1 && found !== undefined ? found : -1;
-}
-
+// Answers the ticked rows, sorted on keys; opts.picked rows start ticked, a typed Enter keeps them and a typed none ticks nothing.
 async function chooseMany(p, question, options, opts) {
   if (p.closed) return null;
   if (options.length === 0) return [];
-  const exclusive = opts && opts.exclusive ? opts.exclusive : [];
   const initial = opts && opts.picked ? opts.picked : [];
-  if (fitsScreen(p, options.length + 2) && rawOn(p)) return keyChooseMany(p, question, options, exclusive, initial);
-  showMenu(p, question, options, -1);
+  const menu = { question, options, lead: [] };
+  if (fitsScreen(p, menuRows(p, menu, 0, initial, 0).length) && rawOn(p)) return keyChooseMany(p, menu, initial);
+  showMenu(p, question, options, []);
   const query = initial.length === 0
-    ? 'Choose one or more (for example 1,2), or press Enter to skip:'
-    : `Choose one or more (for example 1,2) [${initial.map((i) => i + 1).join(',')}]:`;
+    ? 'Choose one or more (for example 1,2), or press Enter for none:'
+    : `Choose one or more (for example 1,2), or none [${initial.map((i) => i + 1).join(',')}]:`;
   for (;;) {
-    const answer = await ask(p, `${p.style.boldCyan(query)} `);
+    const answer = await ask(p, `${QUESTION_INDENT}${p.style.bold(query)} `);
     if (answer === null) return null;
     if (answer === '') return initial;
+    if (answer.toLowerCase() === 'none') return [];
     const picked = parseNumbers(answer, options.length);
-    if (picked !== null) {
-      const mixed = mixedExclusive(picked, exclusive);
-      if (mixed === -1) return picked;
-      p.output.write(`${p.style.yellow(`"${options[mixed].label}" can't be combined with other choices.`)}\n`);
-    } else {
-      p.output.write(`${p.style.yellow(`Enter numbers from 1 to ${options.length}, separated by commas.`)}\n`);
-    }
+    if (picked !== null) return picked;
+    p.output.write(`${QUESTION_INDENT}Enter numbers from 1 to ${options.length}, separated by commas.\n`);
   }
 }
 
 async function confirm(p, question, defaultYes) {
   if (p.closed) return null;
   if (rawOn(p)) return keyConfirm(p, question, defaultYes);
-  const query = `\n${p.style.bold(question)} ${p.style.boldCyan(defaultYes ? '[Y/n]' : '[y/N]')} `;
+  const query = `\n${questionRow(p, question)} ${p.style.dim(defaultYes ? '[Y/n]' : '[y/N]')} `;
   for (;;) {
     const answer = await ask(p, query);
     if (answer === null) return null;
     if (answer === '') return defaultYes;
     if (/^(y|yes)$/i.test(answer)) return true;
     if (/^(n|no)$/i.test(answer)) return false;
-    p.output.write(`${p.style.yellow('Answer y or n.')}\n`);
+    p.output.write(`${QUESTION_INDENT}Answer y or n.\n`);
   }
 }
 
 // Reads one line in both modes; it arrives trimmed, and an empty one is null.
 async function text(p, question) {
-  const answer = await ask(p, `\n${p.style.bold(question)} `);
+  const answer = await ask(p, `\n${questionRow(p, question)} `);
   return answer === null || answer === '' ? null : answer;
 }
 

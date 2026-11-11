@@ -1,31 +1,21 @@
-// The workspace steps of the terminal setup: new folders, newly joined workspaces, then repos and folders with no rule.
-import { lastLine, outputLines, report, token } from './output.mjs';
+// The tracking step of the terminal setup: the one question from `workspace setup`, its tick lists and their writes.
+import { offerLine } from '../../ux/setup/style.mjs';
+import { lastLine, outputLines, printable, report, token } from './output.mjs';
 
-const DONT_TRACK = {
-  repo: "Don't track this repo",
-  folder: "Don't track this folder",
-  outside: "Don't track these",
-};
-const SETUP_QUESTION = 'Where should analytics from this machine go?';
-const PER_REPO = { label: 'Let me choose per repo', description: 'Beezi asks about each repo and folder with history next, and new ones when a session starts there' };
-export const SEVERAL = { label: 'Several workspaces…', description: 'Pick two or more; everything goes to each of them' };
-export const SEVERAL_QUESTION = 'Which workspaces should get analytics from this machine?';
 const LABEL_END = /\), \d+ sessions?\b/;
 const PLAIN_PLACE = /^(.*?), \d+ sessions?\b/;
+const SESSIONS = /, (\d+) sessions?$/;
 const NO_FOLDER = /^\d+ other past sessions? ha(?:s|ve) no recorded folder and (?:is|are) not sent\.$/;
-const JOINED_NAMES = / you joined (.+) — \d+ repos? or folders? to review account=/;
-export const NONE_OF_THESE = 'None of these';
+const CHECKLIST_OPEN = '<checklist>';
+const CHECKLIST_CLOSE = '</checklist>';
+const NOT_TRACKED = 'none';
+const NO_RULE = 'default';
+const TRACKING_ALL = '✓ Tracking every repo and folder you work in';
 
 export function parseWorkspaces(text) {
   return outputLines(text).filter((line) => /^W\. /.test(line)).map((line) => {
     const at = line.indexOf(' account=');
-    const fields = line.slice(at);
-    return {
-      name: line.slice(3, at),
-      tenant: token(fields, 'tenant'),
-      role: line.slice(line.lastIndexOf(' role=') + ' role='.length),
-      isNew: token(fields, 'new') === 'yes',
-    };
+    return { name: line.slice(3, at), tenant: token(line.slice(at), 'tenant') };
   });
 }
 
@@ -44,196 +34,220 @@ function describePlace(body) {
   return { short: plain ? plain[1] : body, label: null };
 }
 
-export function parsePlaces(text, letter) {
-  const head = new RegExp(`^${letter}\\d+\\. `);
-  return outputLines(text).filter((line) => head.test(line)).map((line) => {
+// The listing's T lines; match= is the last field and runs to the line's end.
+export function parsePlaces(text) {
+  return outputLines(text).filter((line) => /^T\d+\. /.test(line)).map((line) => {
     const at = line.indexOf(' account=');
     const fields = line.slice(at);
+    const body = line.slice(0, at).replace(/^T\d+\. /, '');
     const matchFrom = fields.indexOf(' match=') + ' match='.length;
-    const nowAt = letter === 'J' ? fields.lastIndexOf(' now=') : -1;
-    const place = describePlace(line.slice(0, at).replace(head, ''));
-    const whereAt = line.indexOf(', now: ');
+    const place = describePlace(body);
+    const sessions = SESSIONS.exec(body);
     return {
       kind: token(fields, 'kind'),
-      match: fields.slice(matchFrom, nowAt > matchFrom ? nowAt : fields.length),
-      short: place.short,
-      label: place.label,
-      where: letter === 'J' && whereAt !== -1 && whereAt < at ? line.slice(whereAt + ', now: '.length, at) : null,
+      match: fields.slice(matchFrom),
+      now: token(fields, 'now'),
+      name: place.label !== null ? place.label : place.short,
+      sessions: sessions ? Number(sessions[1]) : 0,
     };
   });
 }
 
-export function placeQuestion(place, i, n) {
-  const folder = place.label !== null ? place.label : place.match;
-  let subject = place.short;
-  if (place.kind === 'outside') subject = 'sessions outside a project folder';
-  if (place.kind === 'folder') subject = `${folder} (and everything inside it)`;
-  return `(${i} of ${n}) Where should analytics for ${subject} go?`;
-}
-
-export function workspaceOptions(workspaces) {
-  return workspaces.map((w) => ({
-    label: w.name,
-    description: `${w.role || 'Beezi workspace'}${w.isNew ? ', new' : ''}`,
-  }));
-}
-
-export function placeOptions(place, workspaces) {
-  const nothing = place.kind === 'outside'
-    ? 'Not tracked: nothing from sessions outside a project folder is sent'
-    : `Not tracked: nothing from ${place.short} is sent`;
-  return workspaceOptions(workspaces).concat([{ label: DONT_TRACK[place.kind], description: nothing }]);
-}
-
-// 'none' only when Don't track is the whole pick; a mix is a programming error the prompt prevents.
-export function tenantsArg(picked, workspaces) {
-  if (picked.indexOf(workspaces.length) !== -1) {
-    if (picked.length === 1) return 'none';
-    throw new Error("Don't track was combined with a workspace");
-  }
-  return picked.map((i) => workspaces[i].tenant).join(',');
+// `workspace setup` output: the checklist, workspaces, places, the no-folder sentence and the last setup= line.
+export function parseListing(text) {
+  const lines = outputLines(text);
+  const open = lines.indexOf(CHECKLIST_OPEN);
+  const close = lines.indexOf(CHECKLIST_CLOSE);
+  const last = lastLine(text, /^setup=/);
+  return {
+    checklist: open !== -1 && close > open ? lines.slice(open + 1, close) : [],
+    workspaces: parseWorkspaces(text),
+    places: parsePlaces(text),
+    noFolder: lastLine(text, NO_FOLDER),
+    workspaceCount: last === null ? 0 : Number(token(last, 'workspaces')),
+    chosen: last !== null && token(last, 'chosen') === 'yes',
+  };
 }
 
 function targetArgs(place) {
   return place.kind === 'outside' ? ['--outside'] : [`--${place.kind}`, place.match];
 }
 
-// rule add in the order the routes listing prints it: <target> --account <key> <tenants>.
+// rule add in the order the listing prints it: <target> --account <key> <tenants>.
 export function ruleArgv(place, key, tenants) {
   return ['rule', 'add'].concat(targetArgs(place), ['--account', key, tenants]);
 }
 
-// joined pick in the order the joined listing prints it: <target> --account <key> <tenant>.
-export function pickArgv(place, key, tenant) {
-  return ['joined', 'pick'].concat(targetArgs(place), ['--account', key, tenant]);
+// Runs one write; false, with its failure shown, unless it ends with its saved line (a refused write still exits 0).
+async function write(ctx, argv, saved) {
+  const result = await ctx.run('workspace', argv);
+  const lines = printable(result.stdout);
+  if (result.code === 0 && saved.test(lines[lines.length - 1] || '')) return true;
+  report(ctx, result);
+  return false;
 }
 
-async function runAndReport(ctx, argv) {
-  report(ctx, await ctx.run('workspace', argv));
+function everything(ctx, key, tenants) {
+  return write(ctx, ['setup', 'everything', '--account', key].concat(tenants), /^setup=everything$/);
 }
 
-// The `history=<N> places=<M>` counts, or null when the line is missing or malformed.
-export function parseHistory(text) {
-  const line = lastLine(text, /^history=/);
-  const found = line === null ? null : /^history=(\d+) places=(\d+)$/.exec(line.trimEnd());
-  return found ? { sessions: Number(found[1]), places: Number(found[2]) } : null;
+function letMeChoose(ctx, key) {
+  return write(ctx, ['setup', 'chosen', '--account', key], /^setup=chosen$/);
 }
 
-// One option per workspace, each sending everything there, then the several-workspaces and per-repo options.
-export function setupOptions(workspaces, history) {
-  const description = history !== null && history.places > 0
-    ? `Everything goes here: new repos and folders, and the ${history.places} you've worked in before`
-    : 'Everything goes here, starting with new repos and folders';
-  return workspaces.map((w) => ({ label: w.name, description })).concat([SEVERAL, PER_REPO]);
+function names(list) {
+  return list.length < 2 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
 }
 
-// One question: a workspace, several workspaces (a follow-up multi-pick), or per repo; a dismissed follow-up runs nothing.
-export async function askNewFolders(ctx, key) {
-  const listing = await ctx.run('workspace', ['new-folders', '--history', '--account', key]);
-  if (listing.code !== 0) {
-    report(ctx, listing);
-    return;
-  }
-  const last = lastLine(listing.stdout, /^new-folders=/);
-  if (last === null || token(last, 'set') !== 'no' || token(last, 'multi') !== 'yes') return;
-  const workspaces = parseWorkspaces(listing.stdout);
-  const choice = await ctx.ask.choose(SETUP_QUESTION, setupOptions(workspaces, parseHistory(listing.stdout)), { defaultIndex: 0 });
-  if (choice === null) return;
-  if (choice === workspaces.length + 1) {
-    await runAndReport(ctx, ['new-folders', 'ask', '--account', key]);
-    return;
-  }
-  const picked = choice === workspaces.length ? await ctx.ask.chooseMany(SEVERAL_QUESTION, workspaceOptions(workspaces)) : [choice];
-  if (picked === null || picked.length === 0) return;
-  await runAndReport(ctx, ['new-folders', 'send', tenantsArg(picked, workspaces), '--account', key]);
+function trackingLine(tracked, total, suffix) {
+  const count = tracked === total ? `all ${total}` : `${tracked} of ${total}`;
+  return `✓ Tracking ${count} repos and folders${suffix}`;
 }
 
-// One question per place; a place with an empty or dismissed pick gets no rule.
-async function askPerPlace(ctx, key, places, workspaces) {
+function askedLine(ctx) {
+  return `  ${ctx.style.dim('New repos: Beezi asks the first time you work in one.')}`;
+}
+
+function notTracked(ctx, places) {
+  if (places.length > 0) ctx.print(`  ${ctx.style.dim(`Not tracked: ${places.map((p) => p.name).join(', ')}`)}`);
+}
+
+// Whether a list starts with a place ticked: "Don't track" never, a ruled place for its workspaces, else when no earlier list ticked it.
+function startsTicked(place, tenant, earlier) {
+  if (place.now === NOT_TRACKED) return false;
+  if (place.now === NO_RULE) return earlier === 0;
+  return place.now.split(',').indexOf(tenant) !== -1;
+}
+
+function sameTargets(now, target) {
+  return now.split(',').sort().join(',') === target.split(',').sort().join(',');
+}
+
+// One rule write per place whose routing changes (one workspace: only the unticked, with none), then setup chosen; false at the first failure.
+async function writeRules(ctx, key, places, targets, single) {
   for (let i = 0; i < places.length; i += 1) {
-    const question = placeQuestion(places[i], i + 1, places.length);
-    const picked = await ctx.ask.chooseMany(question, placeOptions(places[i], workspaces), { exclusive: [workspaces.length] });
-    if (picked !== null && picked.length > 0) await runAndReport(ctx, ruleArgv(places[i], key, tenantsArg(picked, workspaces)));
+    const keep = single ? targets[i] !== NOT_TRACKED : sameTargets(places[i].now, targets[i]);
+    if (!keep && !(await write(ctx, ruleArgv(places[i], key, targets[i]), /^rule=\d+$/))) return false;
   }
+  return letMeChoose(ctx, key);
 }
 
-function joinedNames(text, workspaces) {
-  const found = JOINED_NAMES.exec(outputLines(text).join('\n'));
-  if (found) return found[1];
-  return workspaces.filter((w) => w.isNew).map((w) => w.name).join(', ');
+const NOTHING_WRITTEN = Object.freeze({ tracked: false, trailer: [] });
+
+function tickOptions(places) {
+  const digits = String(Math.max(...places.map((p) => p.sessions))).length;
+  return places.map((p) => ({ label: p.name, description: `${String(p.sessions).padStart(digits)} session${p.sessions === 1 ? '' : 's'}` }));
 }
 
-// One multi-select per screen of up to 4 places, ending in the exclusive "None of these"; each other pick extends the
-// place to this tenant via joined pick. False when a screen gets an empty pick or is dismissed, which stops the asking.
-async function askReposForTenant(ctx, key, tenant, places) {
-  const name = tenant.name ? tenant.name : tenant.tenant;
-  const parts = Math.ceil(places.length / 4);
-  const none = { label: NONE_OF_THESE, description: `Nothing from these goes to ${name}` };
-  for (let i = 0; i < places.length; i += 4) {
-    const batch = places.slice(i, i + 4);
-    const part = parts > 1 ? ` (part ${i / 4 + 1} of ${parts})` : '';
-    const options = batch.map((p) => ({ label: p.short, description: p.where === 'no rule yet' ? 'No rule yet' : `Now: ${p.where}` })).concat([none]);
-    const question = `Which repos and folders should also send analytics to ${name}?${part}`;
-    const picked = await ctx.ask.chooseMany(question, options, { exclusive: [batch.length] });
-    if (picked === null || picked.length === 0) return false;
-    if (picked.indexOf(batch.length) === -1) {
-      for (let j = 0; j < picked.length; j += 1) await runAndReport(ctx, pickArgv(batch[picked[j]], key, tenant.tenant));
-    }
+// Everything: existing rules stay, so a "Don't track" place is still left out.
+async function trackEverything(ctx, key, listing, chosen) {
+  const tracked = listing.places.filter((p) => p.now !== NOT_TRACKED);
+  if (!(await everything(ctx, key, listing.workspaceCount > 1 ? [chosen.map((w) => w.tenant).join(',')] : []))) return NOTHING_WRITTEN;
+  const suffix = listing.workspaceCount > 1 ? ` in ${ctx.style.bold(names(chosen.map((w) => w.name)))}` : '';
+  ctx.print(trackingLine(tracked.length, listing.places.length, suffix));
+  notTracked(ctx, listing.places.filter((p) => p.now === NOT_TRACKED));
+  return { tracked: tracked.length > 0, trailer: [] };
+}
+
+// A "Don't track" place is not a row: it stays untracked and counts in M and in Not tracked.
+async function chooseOne(ctx, key, listing) {
+  const offered = listing.places.filter((p) => p.now !== NOT_TRACKED);
+  const tenant = listing.workspaces[0].tenant;
+  const picked = offered.map((p, i) => i);
+  const ticked = offered.length === 0 ? [] : await ctx.ask.chooseMany('Which repos and folders should Beezi track?', tickOptions(offered), { picked });
+  if (ticked === null) return null;
+  if (!(await writeRules(ctx, key, offered, offered.map((p, i) => (ticked.indexOf(i) === -1 ? NOT_TRACKED : tenant)), true))) return NOTHING_WRITTEN;
+  const tracked = offered.filter((p, i) => ticked.indexOf(i) !== -1);
+  if (tracked.length === 0) {
+    ctx.print('– Nothing is tracked yet. /beezi-staging-settings adds repos and folders.');
+    return { tracked: false, trailer: [] };
   }
+  ctx.print(trackingLine(tracked.length, listing.places.length, ''));
+  notTracked(ctx, listing.places.filter((p) => tracked.indexOf(p) === -1));
+  return { tracked: true, trailer: [`  ${ctx.style.dim('New repos are tracked. Leave one out in /beezi-staging-settings.')}`] };
+}
+
+// One tick list per workspace; nothing is written until the last list is answered.
+async function chooseSeveral(ctx, key, listing) {
+  const places = listing.places;
+  const ticks = places.map(() => []);
+  for (const w of listing.workspaces) {
+    const picked = places.map((p, i) => i).filter((i) => startsTicked(places[i], w.tenant, ticks[i].length));
+    const ticked = await ctx.ask.chooseMany(`Which repos and folders go to ${w.name}?`, tickOptions(places), { picked });
+    if (ticked === null) return null;
+    ticked.forEach((i) => { ticks[i].push(w.tenant); });
+    ctx.print(ticked.length > 0 ? `✓ ${ctx.style.bold(w.name)} gets ${ticked.length} of ${places.length} repos and folders` : `– Nothing goes to ${w.name}.`);
+  }
+  if (!(await writeRules(ctx, key, places, ticks.map((t) => (t.length > 0 ? t.join(',') : NOT_TRACKED)), false))) return NOTHING_WRITTEN;
+  notTracked(ctx, places.filter((p, i) => ticks[i].length === 0));
+  return { tracked: ticks.some((t) => t.length > 0), trailer: [askedLine(ctx)] };
+}
+
+// "Everything to <name>" per workspace, then one for all of them.
+function everythingOptions(workspaces) {
+  const all = workspaces.length === 2 ? 'Everything to both' : `Everything to all ${workspaces.length}`;
+  return workspaces.map((w) => ({ label: `Everything to ${w.name}` })).concat([{ label: all }]);
+}
+
+// The workspaces an Everything row picked.
+function everythingTargets(workspaces, choice) {
+  return choice < workspaces.length ? [workspaces[choice]] : workspaces;
+}
+
+// The checklist, restyled, and the no-folder sentence: shown above the question and folded away with it.
+function checklistLead(ctx, listing) {
+  return listing.checklist.map((line) => offerLine(ctx.style, line)).concat(listing.noFolder === null ? [] : [listing.noFolder]);
+}
+
+// Several workspaces and no past sessions: where new repos go, or ask for each.
+async function askNoPlaces(ctx, key, listing) {
+  const options = everythingOptions(listing.workspaces).concat([{ label: 'Ask me for each repo' }]);
+  const choice = await ctx.ask.choose("Where should this machine's analytics go?", options, { lead: checklistLead(ctx, listing) });
+  if (choice === null) return;
+  if (choice === options.length - 1) {
+    if (await letMeChoose(ctx, key)) ctx.print(askedLine(ctx));
+    return;
+  }
+  if (await everything(ctx, key, [everythingTargets(listing.workspaces, choice).map((w) => w.tenant).join(',')])) ctx.print(TRACKING_ALL);
+}
+
+async function askPlaces(ctx, key, listing) {
+  const several = listing.workspaceCount > 1;
+  const options = several
+    ? everythingOptions(listing.workspaces).concat([{ label: 'Let me choose', description: 'tick repos for each workspace' }])
+    : [
+      { label: 'Everything', description: `all ${listing.places.length}, and new ones as you open them` },
+      { label: 'Let me choose', description: 'tick the repos and folders' },
+    ];
+  const question = several ? 'Where should they go?' : 'What should it track?';
+  const choice = await ctx.ask.choose(question, options, { lead: checklistLead(ctx, listing) });
+  if (choice === null) return null;
+  if (choice < options.length - 1) return trackEverything(ctx, key, listing, everythingTargets(listing.workspaces, choice));
+  return several ? chooseSeveral(ctx, key, listing) : chooseOne(ctx, key, listing);
+}
+
+// The tracking question from `workspace setup`; { tracked, trailer }, with failed when the listing failed, or null.
+export async function askTracking(ctx, key) {
+  const result = await ctx.run('workspace', ['setup', '--account', key]);
+  if (result.code !== 0) {
+    report(ctx, result);
+    return { tracked: false, trailer: [], failed: true };
+  }
+  const listing = parseListing(result.stdout);
+  if (await settled(ctx, key, listing)) return null;
+  if (listing.places.length > 0) return askPlaces(ctx, key, listing);
+  await askNoPlaces(ctx, key, listing);
+  return null;
+}
+
+// No question for an unknown workspace list, a choice already made, or one workspace with no past sessions (records Everything); else false.
+export async function settled(ctx, key, listing) {
+  if (listing.workspaceCount === 0) return true;
+  if (listing.chosen) {
+    ctx.print('✓ Tracking is already set up (/beezi-staging-settings)');
+    return true;
+  }
+  if (listing.places.length > 0 || listing.workspaceCount > 1) return false;
+  if (await everything(ctx, key, [])) ctx.print(TRACKING_ALL);
   return true;
-}
-
-export async function reviewJoined(ctx, key) {
-  const listing = await ctx.run('workspace', ['joined', '--account', key]);
-  if (listing.code !== 0) {
-    report(ctx, listing);
-    return;
-  }
-  const places = parsePlaces(listing.stdout, 'J');
-  if (places.length === 0) return;
-  const workspaces = parseWorkspaces(listing.stdout);
-  const newTenants = workspaces.filter((w) => w.isNew);
-  if (places.length > 4) {
-    const names = joinedNames(listing.stdout, workspaces);
-    const n = places.length;
-    const choice = await ctx.ask.choose(`You joined ${names}. Where should analytics for these ${n} repos and folders go?`, [
-      { label: `Add ${names} to all ${n}`, description: "Repos you don't track, and ones with no rule yet, stay as they are" },
-      { label: 'Choose repos', description: 'Pick which repos and folders go to each new workspace' },
-      { label: 'Leave them as they are', description: `Nothing changes, and you're not asked about ${names} again` },
-    ]);
-    if (choice === 0) { await runAndReport(ctx, ['joined', 'add-all', '--account', key]); return; }
-    if (choice === 2) { await runAndReport(ctx, ['joined', 'done', '--account', key]); return; }
-    if (choice !== 1) return;
-  }
-  for (let i = 0; i < newTenants.length; i += 1) if (!(await askReposForTenant(ctx, key, newTenants[i], places))) return;
-  await runAndReport(ctx, ['joined', 'done', '--account', key]);
-}
-
-export async function reviewRoutes(ctx, key) {
-  const listing = await ctx.run('workspace', ['routes', '--account', key]);
-  if (listing.code !== 0) {
-    report(ctx, listing);
-    return;
-  }
-  const noFolder = lastLine(listing.stdout, NO_FOLDER);
-  if (noFolder !== null) ctx.print(noFolder);
-  const places = parsePlaces(listing.stdout, 'P');
-  if (places.length === 0) return;
-  const workspaces = parseWorkspaces(listing.stdout);
-  if (places.length > 4) {
-    const n = places.length;
-    const choice = await ctx.ask.choose(`Where should analytics for these ${n} repos and folders go?`, [
-      { label: `Send all ${n} to the same workspaces…`, description: 'Pick the workspaces once for all of them' },
-      { label: 'Choose per repo', description: 'One question per repo or folder' },
-      { label: 'Skip', description: "Nothing from them is sent this time; you're asked again next time" },
-    ]);
-    if (choice === 0) {
-      const picked = await ctx.ask.chooseMany(`Which workspaces should get analytics for these ${n} repos and folders?`, workspaceOptions(workspaces));
-      if (picked !== null && picked.length > 0) {
-        await runAndReport(ctx, ['rule', 'add-all', '--account', key, tenantsArg(picked, workspaces)]);
-      }
-    }
-    if (choice !== 1) return;
-  }
-  await askPerPlace(ctx, key, places, workspaces);
 }

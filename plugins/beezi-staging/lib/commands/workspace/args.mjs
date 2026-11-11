@@ -20,6 +20,7 @@ export const USAGE = 'Usage: workspace.mjs rules [--table] [--session <id>] [--a
   + ' | new-folders [--history | ask | send <id|name|n>… | none] [--session <id>] [--account <ref>]'
   + ' | read <id|name|n> [--session <id>] [--account <ref>]'
   + ' | places [--session <id>] [--account <ref>]'
+  + ' | setup [everything [<id|name|n>…] | chosen] [--account <ref>]'
   + ' | undo [--session <id>]';
 
 export function parseSessionFlag(argv) {

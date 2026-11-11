@@ -1,4 +1,4 @@
-import { readJson, writeJsonSecure } from '../platform/fs-store.mjs';
+import { readJson, readTextFile, writeJsonSecure } from '../platform/fs-store.mjs';
 import { telemetryConsentFile } from '../config/paths.mjs';
 
 const CONSENT_VERSION = 1;
@@ -30,6 +30,18 @@ export function hasBeenAsked() {
 export function isCorrelationGranted() {
   const state = readConsent();
   return state != null && state.consent === 'granted' && state.correlation === 'granted';
+}
+
+// Undecided only with no consent file, or one recording a prompt shown and never answered; an unreadable or other-version file is decided.
+export function hasDecided() {
+  let state;
+  try {
+    state = JSON.parse(readTextFile(telemetryConsentFile()));
+  } catch (error) {
+    return error.code !== 'ENOENT';
+  }
+  if (state == null || state.version !== CONSENT_VERSION) return true;
+  return state.consent === 'granted' || state.consent === 'denied' || state.correlation === 'denied';
 }
 
 export function hasCorrelationBeenAsked() {

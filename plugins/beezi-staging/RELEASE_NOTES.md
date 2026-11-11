@@ -1,5 +1,17 @@
 # Beezi plugin release notes
 
+## 0.4.0 (2026-11-11) — One-question setup
+
+### New
+- **One question at setup** — after you sign in, the terminal setup and `/beezi-staging-login` ask one thing: what Beezi should track. "Everything" tracks every repo and folder, new ones included; "Let me choose" lets you tick the repos and folders, per workspace when you have several. With no past sessions and one workspace, nothing is asked.
+- **Past sessions follow your answer** — the past sessions in the repos and folders you track start uploading in the background right after you answer, without a second question. Places you leave out are never uploaded, and a workspace whose owner chose never to upload past sessions is still skipped.
+
+### Improved
+- **Your plan is found, not asked** — setup and `/beezi-staging-login` read your Copilot plan silently and say which one they found. When they can't tell, they say so and `/beezi-staging-settings` sets it.
+- **Crash reports and the status line on by default** — setup turns on crash reports unless you already chose, and installs the status line when it is off. Both stay changeable in `/beezi-staging-settings`.
+- **Fewer questions at sign-in** — `/beezi-staging-login` no longer asks about this session's folder, the default account, workspaces you joined or repos with no rule. `/beezi-staging-settings` and `/beezi-staging-sync` still cover them.
+- **Beezi's colours in the terminal** — the terminal setup shows the Beezi mark and violet highlights, and ends with a short closing block.
+
 ## 0.3.0 (2026-11-03) — Past sessions that upload without asking
 
 ### New

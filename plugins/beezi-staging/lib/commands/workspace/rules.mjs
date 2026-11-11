@@ -32,7 +32,7 @@ import {
 } from './args.mjs';
 import { displayPath } from '../../core/text.mjs';
 
-const NOT_LINKED = 'Beezi: this machine is not linked. Run /beezi-staging-login to link an account.';
+export const NOT_LINKED = 'Beezi: this machine is not linked. Run /beezi-staging-login to link an account.';
 const TARGET_FLAGS = ['--current', '--repo', '--folder', '--outside'];
 
 function homeDir() {

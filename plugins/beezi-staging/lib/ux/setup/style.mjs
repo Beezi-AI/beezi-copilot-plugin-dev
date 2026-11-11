@@ -1,6 +1,10 @@
 // Colours, terminal checks and line wrapping for the terminal setup.
 const RESET = '\x1b[0m';
-const VIOLETS = [183, 177, 171, 141, 135, 99, 98, 97, 63, 62, 61, 60, 60, 60];
+const ACCENT_TRUE = '38;2;135;91;247';
+const ACCENT_256 = '38;5;99';
+const MARK_FROM = [111, 141, 255];
+const MARK_TO = [105, 56, 239];
+const MARK_RAMP = [69, 63, 63, 99, 99];
 
 // True when the stream is a terminal, NO_COLOR is unset and TERM is not dumb.
 export function colorEnabled(options) {
@@ -15,50 +19,95 @@ export function canReadKeys(options) {
     && options.env.TERM !== 'dumb';
 }
 
-// ANSI wrappers that return the text unchanged when colour is off.
+// One mark column's colour on the #6F8DFF → #6938EF gradient.
+function gradientCode(column, columns) {
+  const at = columns > 1 ? column / (columns - 1) : 0;
+  const rgb = MARK_FROM.map((from, i) => Math.round(from + (MARK_TO[i] - from) * at));
+  return `38;2;${rgb.join(';')}`;
+}
+
+// ANSI wrappers that return the text unchanged when colour is off; truecolor picks the 24-bit accent and mark gradient.
 export function createStyle(options) {
   const enabled = Boolean(options.enabled);
+  const truecolor = Boolean(options.truecolor);
   const wrap = (code) => (text) => (enabled ? `\x1b[${code}m${text}${RESET}` : text);
+  function mark(row, text) {
+    if (!enabled) return text;
+    if (!truecolor) return `\x1b[38;5;${MARK_RAMP[row]}m${text}${RESET}`;
+    const chars = Array.from(text);
+    return chars.map((char, i) => (char === ' ' ? char : `\x1b[${gradientCode(i, chars.length)}m${char}${RESET}`)).join('');
+  }
   return {
     enabled,
     bold: wrap('1'),
     dim: wrap('2'),
-    cyan: wrap('36'),
-    boldCyan: wrap('1;36'),
     blue: wrap('1;34'),
-    green: wrap('32'),
-    boldGreen: wrap('1;32'),
-    yellow: wrap('33'),
     red: wrap('31'),
-    magenta: wrap('35'),
-    violet: (level, text) => (enabled ? `\x1b[38;5;${VIOLETS[level]}m${text}${RESET}` : text),
+    accent: wrap(truecolor ? ACCENT_TRUE : ACCENT_256),
+    mark,
   };
 }
 
-const MAX_ROW = 100;
-
-// The style a line's leading ✓, ⚠, ✗ or "Setup stopped" calls for, or null.
-function toneOf(body) {
-  if (body.startsWith('✓')) return 'green';
-  if (body.startsWith('⚠')) return 'yellow';
-  if (body.startsWith('✗') || body.startsWith('Setup stopped')) return 'red';
-  return null;
+// The style for a terminal stream: colour per colorEnabled, truecolor when COLORTERM says so.
+export function terminalStyle(options) {
+  return createStyle({
+    enabled: colorEnabled(options),
+    truecolor: options.env.COLORTERM === 'truecolor' || options.env.COLORTERM === '24bit',
+  });
 }
 
-// Colours a line by its leading ✓, ⚠, ✗, "Setup stopped" or "==> ", keeping its leading whitespace.
+const MAX_ROW = 100;
+const SGR = /\x1b\[[0-9;]*m/g;
+const OFFER_H1 = /^(Beezi found \d+ past .+ sessions?) (\(.+\))$/;
+const OFFER_H2 = /^ {2}in (.+?)( \+\d+ more)?$/;
+const OFFER_ITEM = /^ {4}([✓◆✕]) (.+)$/;
+const OFFER_HIDDEN = '  Hidden by your workspace';
+const OFFER_ALWAYS = /^ {2}(Always sent: .+)$/;
+const OFFER_WORKSPACE = /^ {2}(\S.*?) (· .+)$/;
+const OFFER_HIDDEN_NOTE = ' — Beezi gets made-up names';
+// A leading mark's glyph style; ✗ also makes the rest of its line bold.
+const MARK_STYLES = { '✓': 'accent', '⚠': 'accent', '✗': 'red', '–': 'dim' };
+const BOLD_REST = '✗';
+
+// Visible characters, with SGR colour codes not counted.
+function visible(text) {
+  return Array.from(text.replace(SGR, '')).length;
+}
+
+// Colours a line's leading ✓, ⚠, ✗, – or "==> ", keeping its leading whitespace.
 export function paint(style, line) {
   const body = line.replace(/^\s+/, '');
   const lead = line.slice(0, line.length - body.length);
-  const tone = toneOf(body);
-  if (tone !== null) return lead + style[tone](body);
+  const glyph = body.charAt(0);
+  if (MARK_STYLES[glyph] !== undefined) {
+    const rest = body.slice(1);
+    return `${lead}${style[MARK_STYLES[glyph]](glyph)}${glyph === BOLD_REST ? style.bold(rest) : rest}`;
+  }
   if (body.startsWith('==> ')) return `${lead}${style.blue('==>')}${body.slice(3)}`;
   return line;
 }
 
-// Rows of at most min(columns − 1, 100) characters, broken at spaces: later rows keep the line's indent plus 2; a word longer than a row stays whole.
+// Styles one past-sessions checklist line by its exact shape (H1, H2, Hidden, Never sent, ✓/◆/✕ items, Always sent, workspace · hides); any other line comes back unchanged.
+export function offerLine(style, line) {
+  const head = OFFER_H1.exec(line);
+  if (head !== null) return `${style.bold(head[1])} ${style.dim(head[2])}`;
+  const item = OFFER_ITEM.exec(line);
+  if (item !== null && item[1] !== '✕') return `    ${style.accent(item[1])} ${item[2]}`;
+  if (item !== null) return `    ${style.dim('✕')} ${style.dim(item[2])}`;
+  if (line === `${OFFER_HIDDEN}${OFFER_HIDDEN_NOTE}`) return `${OFFER_HIDDEN}${style.dim(OFFER_HIDDEN_NOTE)}`;
+  if (line === '  Never sent') return `  ${style.dim('Never sent')}`;
+  const folders = OFFER_H2.exec(line);
+  if (folders !== null) return `  ${style.dim('in')} ${folders[1]}${folders[2] === undefined ? '' : ` ${style.dim(folders[2].trim())}`}`;
+  const always = OFFER_ALWAYS.exec(line);
+  if (always !== null) return `  ${style.dim(always[1])}`;
+  const workspace = OFFER_WORKSPACE.exec(line);
+  return workspace === null ? line : `  ${workspace[1]} ${style.dim(workspace[2])}`;
+}
+
+// Rows of at most min(columns − 1, 100) visible characters, broken at spaces: later rows keep the line's indent plus 2; a word longer than a row stays whole.
 export function wrapLines(line, columns) {
   const room = Math.min(Math.max((columns || 80) - 1, 20), MAX_ROW);
-  if (Array.from(line).length <= room) return [line];
+  if (visible(line) <= room) return [line];
   const body = line.replace(/^\s+/, '');
   const lead = line.slice(0, line.length - body.length);
   const hang = `${lead}  `;
@@ -68,7 +117,7 @@ export function wrapLines(line, columns) {
     const prefix = rows.length === 0 ? lead : hang;
     if (row === '') {
       row = word;
-    } else if (Array.from(`${prefix}${row} ${word}`).length > room) {
+    } else if (visible(`${prefix}${row} ${word}`) > room) {
       rows.push(prefix + row);
       row = word;
     } else {
@@ -79,38 +128,14 @@ export function wrapLines(line, columns) {
   return rows;
 }
 
-// Wrapped rows joined with \n: the first painted as paint() does, every later one in the first row's tone.
+// Wrapped rows joined with \n: the first painted as paint() does; later rows of a ✗ line stay bold.
 export function paintRows(style, rows) {
-  const tone = toneOf(rows[0].replace(/^\s+/, ''));
+  const bold = rows[0].replace(/^\s+/, '').charAt(0) === BOLD_REST;
   return rows.map((row, i) => {
     if (i === 0) return paint(style, row);
-    if (tone === null) return row;
+    if (!bold) return row;
     const rest = row.replace(/^\s+/, '');
-    return row.slice(0, row.length - rest.length) + style[tone](rest);
-  }).join('\n');
-}
-
-// The K7-C offer line shapes: [pattern, painter of a matching row, tone of its wrapped rows].
-const OFFER_SHAPES = [
-  [/^(Beezi found \d+ past .+? sessions?)( \(.*)$/, (s, m) => `${s.bold(m[1])}${s.dim(m[2])}`, 'dim'],
-  [/^ {2}in (.+?)(?: \+(\d+) more)?$/, (s, m) => `  ${s.dim('in')} ${m[1]}${m[2] ? ` ${s.dim(`+${m[2]} more`)}` : ''}`, null],
-  [/^ {2}Sent$/, (s) => `  ${s.green('Sent')}`, null],
-  [/^ {4}✓ (.*)$/, (s, m) => `    ${s.green('✓')} ${m[1]}`, null],
-  [/^ {2}Hidden by your workspace( — Beezi gets made-up names)$/, (s, m) => `  ${s.magenta('Hidden by your workspace')}${s.dim(m[1])}`, null],
-  [/^ {4}◆ (.*)$/, (s, m) => `    ${s.magenta('◆')} ${m[1]}`, null],
-  [/^ {2}Never sent$/, (s) => `  ${s.dim('Never sent')}`, null],
-  [/^ {4}✕ (.*)$/, (s, m) => `    ${s.dim('✕')} ${s.dim(m[1])}`, 'dim'],
-];
-
-// One offer line wrapped to columns (none when null), its first row styled by its K7-C shape; any other line as formatLine does.
-export function formatOfferLine(style, line, columns) {
-  const rows = columns == null ? [line] : wrapLines(line, columns);
-  const shape = OFFER_SHAPES.find((entry) => entry[0].test(rows[0]));
-  if (shape === undefined) return paintRows(style, rows);
-  return rows.map((row, i) => {
-    if (i === 0) return shape[1](style, shape[0].exec(row));
-    const rest = row.replace(/^\s+/, '');
-    return shape[2] === null ? row : row.slice(0, row.length - rest.length) + style[shape[2]](rest);
+    return row.slice(0, row.length - rest.length) + style.bold(rest);
   }).join('\n');
 }
 

@@ -1,31 +1,31 @@
-// The terminal setup flow: the /beezi-staging-login steps in a terminal, then crash reports and the status line.
-import { chooseAccount, machineReady } from './account.mjs';
-import { askMachineSettings, offerDefault, uploadHistory } from './finish.mjs';
+// The terminal setup flow: preflight, account, plan, tracking, upload, machine defaults, then the closing block.
+import { closingLines } from '../../ux/setup/finale.mjs';
+import { chooseAccount, machineReady, signedInLine } from './account.mjs';
+import { applyDefaults, uploadPast } from './finish.mjs';
 import { capturePlan } from './plan.mjs';
-import { askNewFolders, reviewJoined, reviewRoutes } from './routing.mjs';
+import { askTracking } from './routing.mjs';
 
-export const MACHINE_LABEL = 'Checking this machine…';
-export const WORKSPACES_LABEL = 'Checking your workspaces…';
-export const PLAN_LABEL = 'Checking your plan…';
-export const SESSIONS_LABEL = 'Looking at your past sessions…';
-export const SETTINGS_LABEL = 'Saving your settings…';
+const MACHINE_LABEL = 'Checking this machine';
+const SESSIONS_LABEL = 'Checking past sessions';
 
-// 0 when done; 1 when preflight refuses or no account was chosen or signed in. Each phase names the activity line its runs show.
+// 0 when done, with ctx.notices just before the closing block; 1 when preflight refuses or no account signed in.
 export async function runSetup(ctx) {
   ctx.progress(MACHINE_LABEL);
   if (!(await machineReady(ctx))) return 1;
   const account = await chooseAccount(ctx);
   if (account === null) return 1;
-  ctx.progress(WORKSPACES_LABEL);
-  await askNewFolders(ctx, account.key);
-  ctx.progress(PLAN_LABEL);
-  await capturePlan(ctx, account.key);
-  await offerDefault(ctx, account);
+  ctx.print(await signedInLine(ctx, account));
+  const plan = await capturePlan(ctx, account.key);
+  if (plan !== null) ctx.print(`✓ Plan found: ${plan}`);
   ctx.progress(SESSIONS_LABEL);
-  await reviewJoined(ctx, account.key);
-  await reviewRoutes(ctx, account.key);
-  await uploadHistory(ctx, account.key);
-  ctx.progress(SETTINGS_LABEL);
-  await askMachineSettings(ctx);
+  const tracking = await askTracking(ctx, account.key);
+  if (tracking !== null && tracking.tracked) await uploadPast(ctx, account.key);
+  if (tracking !== null) tracking.trailer.forEach((line) => ctx.print(line));
+  ctx.progress(MACHINE_LABEL);
+  const on = await applyDefaults(ctx);
+  ctx.notices.forEach((line) => ctx.print(line));
+  const pastFailed = tracking !== null && tracking.failed === true;
+  closingLines({ style: ctx.style, crash: on.crash, statusline: on.statusline, planFound: plan !== null, pastFailed })
+    .forEach((line) => ctx.print(line));
   return 0;
 }

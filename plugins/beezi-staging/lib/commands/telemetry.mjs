@@ -1,7 +1,7 @@
-// telemetry.mjs on|off|correlate|anonymous: change crash-report consent, or describe it when no mode is given.
+// telemetry.mjs on|off|correlate|anonymous|default: change crash-report consent, or describe it when no mode is given.
 import {
   grantConsent, denyConsent, grantCorrelation, denyCorrelation,
-  isTelemetryGranted, isCorrelationGranted,
+  isTelemetryGranted, isCorrelationGranted, hasDecided,
 } from '../telemetry/consent.mjs';
 import { purgeAllDiagnostics, purgeCorrelatedDiagnostics } from '../telemetry/flush.mjs';
 import { checkInteractive } from '../host/mode-guard.mjs';
@@ -10,7 +10,7 @@ const CORRELATION_ON = 'An installation ID is attached, so a report can be match
   + 'Beezi account linked here.';
 const CORRELATION_OFF = 'Reports are anonymous — no installation ID is attached.';
 
-const MODES = ['on', 'off', 'correlate', 'anonymous'];
+const MODES = ['on', 'off', 'correlate', 'anonymous', 'default'];
 
 export function setTelemetry(mode) {
   // A consent answer produced by autopilot is not consent. Showing the current setting is never refused.
@@ -37,6 +37,12 @@ export function setTelemetry(mode) {
     // Reports already stamped with the ID go; the anonymous ones stay and keep being sent.
     purgeCorrelatedDiagnostics();
     return `Beezi diagnostics stay ON, without account correlation. ${CORRELATION_OFF} Pending correlated reports were deleted.`;
+  }
+  // Null when the machine already decided: nothing changed, nothing to say.
+  if (mode === 'default') {
+    if (hasDecided()) return null;
+    grantCorrelation();
+    return '✓ Crash reports are on.';
   }
   if (!isTelemetryGranted()) {
     return 'Beezi diagnostics are OFF. Use /beezi-staging-settings telemetry on|off|correlate|anonymous to change.';

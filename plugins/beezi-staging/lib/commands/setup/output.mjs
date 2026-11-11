@@ -1,5 +1,5 @@
 // Reading the plugin scripts' output for the terminal setup: lines, key=value fields, and what a person sees.
-const MACHINE_LINES = [/^[\w-]+=/, /^[A-Z]\d*\. .* account=/, /-command=/, /^\s*[{[]/];
+const MACHINE_LINES = [/^[\w-]+=/, /^[A-Z]\d*\. .* account=/, /-command=/, /^\s*[{[]/, /^<\/?checklist>$/];
 const STOPPED = '✗ That step stopped unexpectedly.';
 
 export function outputLines(text) {
@@ -44,13 +44,4 @@ export function report(ctx, result) {
   }
   const lines = printable(result.stdout);
   if (lines.length) ctx.print(lines[0]);
-}
-
-// Every human stdout line on success; a failure as report prints it.
-export function reportAll(ctx, result) {
-  if (result.code !== 0) {
-    reportFailure(ctx, result);
-    return;
-  }
-  humanLines(result.stdout).forEach((line) => ctx.print(line));
 }

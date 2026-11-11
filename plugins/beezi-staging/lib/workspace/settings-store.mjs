@@ -44,6 +44,11 @@ export function markTenantsReviewed(key, ids, deps = {}) {
   return addTenantIds(key, 'reviewedTenantIds', ids, deps);
 }
 
+// The setup's tracking question was answered for this account on this machine (workspace.mjs setup everything / chosen).
+export function markTrackingChosen(key, nowIso) {
+  return mutateRow(key, (row) => { row.trackingChosenAt = nowIso; });
+}
+
 // Workspaces the session-start notice already announced on this machine.
 export function markJoinNoticed(key, ids, deps = {}) {
   return addTenantIds(key, 'joinNoticedTenantIds', ids, deps);

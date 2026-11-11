@@ -41,20 +41,20 @@ function lineEcho(write, hide, paint, activity) {
   };
 }
 
-// "<frame> <text>" on one terminal row while a child runs: first drawn after FIRST_DRAW_MS, then every FRAME_MS.
-function createActivity(output, frames, timers) {
+// "<margin><frame> <text>" on one terminal row while a child runs: first drawn after FIRST_DRAW_MS, then every FRAME_MS.
+function createActivity(output, frames, timers, margin, accent) {
   let text = '';
   let frame = 0;
   let shown = false;
   let delay = null;
   let ticker = null;
   function fitted() {
-    const room = (output.columns || 80) - 3;
+    const room = (output.columns || 80) - margin.length - 3;
     const chars = Array.from(text);
     return chars.length <= room ? text : `${chars.slice(0, room - 1).join('')}…`;
   }
   function draw() {
-    output.write(`${shown ? '' : HIDE_CURSOR}${CLEAR_LINE}${frames[frame % frames.length]} ${fitted()}`);
+    output.write(`${shown ? '' : HIDE_CURSOR}${CLEAR_LINE}${margin}${accent(frames[frame % frames.length])} ${fitted()}`);
     shown = true;
     frame += 1;
   }
@@ -95,7 +95,9 @@ export function createRunner(options) {
   const paint = options.paint || ((line) => line);
   const frames = (options.platform || process.platform) === 'win32' ? ASCII_FRAMES : FRAMES;
   const timers = options.timers || { setTimeout, clearTimeout, setInterval, clearInterval };
-  const activity = options.activity ? createActivity(options.output || stdout, frames, timers) : null;
+  const activity = options.activity
+    ? createActivity(options.output || stdout, frames, timers, options.margin || '', options.accent || ((frame) => frame))
+    : null;
   let label = null;
 
   function run(script, argv, opts) {
