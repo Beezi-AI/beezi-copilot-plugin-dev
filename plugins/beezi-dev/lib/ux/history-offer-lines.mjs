@@ -90,9 +90,14 @@ export function noAskLines(count, workspace) {
 
 const workspaceLine = (mark) => ({ workspace, count, kinds }) => `    ${mark} ${workspace} · ${plural(count, 'session')} · ${hidesPhrase(kinds)}`;
 
+// Several workspaces' summary head: the sessions found, then what every workspace is always sent.
+export function combinedHeader({ count, firstMs, lastMs }) {
+  return [`Beezi found ${plural(count, `past ${AGENT} session`)} (${dateRange(firstMs, lastMs)})`, ALWAYS_SENT];
+}
+
 // Several workspaces' summary; `uploads` and `asks` are [{ workspace, count, kinds }], `count` the distinct sessions of all.
 export function combinedLines({ count, firstMs, lastMs, uploads, asks }) {
-  const lines = [`Beezi found ${plural(count, `past ${AGENT} session`)} (${dateRange(firstMs, lastMs)})`, ALWAYS_SENT];
+  const lines = combinedHeader({ count, firstMs, lastMs });
   if (uploads.length > 0) lines.push('  Uploading without a question — these workspaces chose that', ...uploads.map(workspaceLine('✓')));
   if (asks.length > 0) lines.push('  Asks you first', ...asks.map(workspaceLine('?')));
   return lines;

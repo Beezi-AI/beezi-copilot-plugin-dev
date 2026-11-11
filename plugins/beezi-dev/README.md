@@ -74,13 +74,16 @@ and `/beezi-settings account` shows the name this machine appears as there.
 **Past sessions are uploaded only after you say yes, unless the workspace's owner chose upload without
 asking.** Sessions that started before you linked this
 machine to a workspace (or before you joined it) are past sessions, except one you continue after
-linking, which is tracked live from then on. When there are past sessions,
-Beezi first shows a summary: how many sessions, from which dates and folders, what each one sends and
-which details the workspace hides. It uploads them only after you answer "Upload now". "Not now" uploads
-nothing and is remembered until the workspace's owner changes the past-sessions setting. When the
-owner chose upload without asking, the summary is a notice that says so, and the upload starts with no
-question. The summary
-can come from `/beezi-login`, the terminal setup, the start of a new session, or `/beezi-sync`. A new
+linking, which is tracked live from then on. `/beezi-login` and the terminal setup first show a
+summary of the past sessions they found: how many, from which dates and folders, what each one sends and
+which details each workspace hides. Then they ask one question: what to track. Your answer is the yes:
+right after it, the past sessions that summary listed, from the repos and folders you chose to track,
+upload in the background, with at least the details hidden that the summary said were hidden. A
+workspace whose owner chose never to upload past sessions gets none. Later, a new session or
+`/beezi-sync` shows the same kind of summary for past sessions not uploaded yet and uploads them only
+after you answer "Upload now". "Not now" uploads nothing and is remembered until the workspace's owner
+changes the past-sessions setting. When the owner chose upload without asking, the summary is a notice
+that says so, and the upload starts with no question. A new
 session asks only when the workspace offers past sessions; `/beezi-sync` always asks, except for a
 workspace whose owner chose upload without asking, which gets the notice and the upload. `/beezi-sync`
 still asks that workspace first when you said "Not now" to some of its sessions under the owner's
@@ -97,10 +100,12 @@ tool arguments, command text and tool results, and your GitHub or Copilot tokens
 is kept in your operating system's secret store when there is one, and otherwise in a file only your
 user account can read.
 
-**Crash reports** are off unless you turn them on in `/beezi-settings`. They carry the plugin, Copilot
+**Crash reports** are turned on by `/beezi-login` and the terminal setup, unless you already turned
+them on or off on this machine; `/beezi-settings` changes them. They carry the plugin, Copilot
 and Node versions, your OS, OS version and CPU type, the plugin file and line that failed, the error's
-name, code and HTTP status, your sign-in state, and how many times and when it happened. If you choose
-"Correlate", a random installation ID also ties them to your Beezi account. They never carry your code,
+name, code and HTTP status, your sign-in state, and how many times and when it happened. The setup turns
+them on with "Correlate", so a random installation ID also ties them to your Beezi account; "Anonymous"
+in `/beezi-settings` leaves it out. They never carry your code,
 prompts, repository names or any path outside the plugin.
 
 ## Package layout
@@ -136,7 +141,7 @@ the same text in `hookSpecificOutput.additionalContext` for VS Code.
 | Event | Script | Work |
 |---|---|---|
 | `SessionStart` | `session-start.mjs` | link check, notices, workspace question, queue flush, prune, billing reconcile, account check-in, update check, past-sessions question (attended sessions), privacy notice |
-| `SessionStart` (detached) | `history-worker.mjs` | uploads past sessions only after you answered Upload to the summary, or after the notice for a workspace whose owner chose upload without asking; `accept` starts it, and session start and the watcher retry it |
+| `SessionStart` (detached) | `history-worker.mjs` | uploads past sessions only after you answered Upload to the summary, answered the setup's tracking question, or got the notice for a workspace whose owner chose upload without asking; `accept` and the setup start it, and session start and the watcher retry it |
 | `SessionStart` (detached) | `catch-up-worker.mjs` | checkpoints up to 3 recent sessions whose file grew past what was reported or whose final shutdown is still owed; one per machine at a time |
 | `UserPromptSubmit` | `track-prompt.mjs` | records the interaction mode; asks for a background quota refresh when one is due |
 | `PostToolUse` (shell) | `checkpoint.mjs` | checkpoint after `git commit`, `switch`, `checkout`, `merge`, `rebase` or `pull` (also with `-C <dir>`) and `gh pr checkout` |
@@ -163,7 +168,7 @@ the tool list, a call to one is refused locally, and the bridge replaces the ser
 
 | Skill | Runs |
 |---|---|
-| `beezi-login` | `preflight.mjs`, `login.mjs`, `workspace.mjs`, `billing-capture.mjs`, `accounts.mjs`, `history-offer.mjs` |
+| `beezi-login` | `preflight.mjs`, `login-flow.mjs` (which runs `login.mjs`, `billing-capture.mjs`, `workspace.mjs setup`, `history-offer.mjs`, `telemetry.mjs`, `settings.mjs` and `statusline-install.mjs`), and `login.mjs` for a sign-in without the browser |
 | `beezi-logout` | `preflight.mjs`, `logout.mjs` |
 | `beezi-settings` | `preflight.mjs`, `settings.mjs`, `workspace.mjs`, `accounts.mjs`, `billing-capture.mjs`, `telemetry.mjs`, `statusline-install.mjs` |
 | `beezi-sync` | `preflight.mjs`, `accounts.mjs`, `workspace.mjs routes`, `sync.mjs`, `history-offer.mjs` |
@@ -175,9 +180,11 @@ The interactive skills call `preflight.mjs` first and refuse to continue in auto
 auto-answered question can never create a routing rule or grant consent.
 
 **Terminal setup.** The one-line installers run `setup.mjs` once, right after the install, in the same
-terminal: the `beezi-login` steps (minus the current session's folder rule; there is no session), then crash
-reports and the status line. It runs `preflight.mjs`, `accounts.mjs`, `login.mjs`, `workspace.mjs`,
-`billing-capture.mjs`, `history-offer.mjs`, `settings.mjs`, `telemetry.mjs` and `statusline-install.mjs` as child
+terminal, with the same steps as `/beezi-login`: it uses the account already linked or signs in, reads the
+Copilot plan without asking, and asks one question, what to track. After the answer it uploads the chosen
+past sessions in the background, turns on crash reports and the status line unless you already decided,
+and ends with what is on. It runs `preflight.mjs`, `accounts.mjs`, `login.mjs`, `settings.mjs`,
+`billing-capture.mjs`, `workspace.mjs`, `history-offer.mjs`, `telemetry.mjs` and `statusline-install.mjs` as child
 processes. Where no browser can open (SSH, a Codespace, a dev container, Linux with no display) it signs in
 with the paste-back flow: `login.mjs --no-browser`, then `--complete` with the pasted address. The child
 processes run without `COPILOT_GITHUB_TOKEN` and `GITHUB_TOKEN`, which Copilot keeps out of its hooks, so setup
@@ -335,7 +342,7 @@ window keeps its chat sessions is unverified). Cursor and Windsurf are not read.
 
   | Source | Read from |
   |---|---|
-  | A plan you declared | `/beezi-login` or `/beezi-settings refresh`, for one GitHub account; a newer observed plan replaces it |
+  | A plan you declared | `/beezi-settings refresh`, for one GitHub account; a newer observed plan replaces it |
   | The Copilot runtime | its account answer from the quota probe below, else its own user cache |
   | VS Code | the Copilot entitlement VS Code stored for the newest signed-in launch, else the plan sku Copilot Chat logged |
 
@@ -345,7 +352,7 @@ window keeps its chat sessions is unverified). Cursor and Windsurf are not read.
   environment variable (`COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`) overrides only the CLI's.
   `billing.json` keeps an observed and a declared plan per GitHub account, so a VS Code session bound
   to its own account gets that account's plan whatever the CLI is signed in as. When VS Code's account
-  differs from the CLI's and has no plan, `/beezi-login` and `/beezi-settings refresh` ask for it
+  differs from the CLI's and has no plan, `/beezi-settings refresh` asks for it
   separately (`billing-capture.mjs --plan <plan> --github <host/login>`).
 - **The account** on a report is `account_uuid`, the lowercase GitHub identity `<host>/<login>`, up to
   64 characters. No email is sent. The account a session ran under is found in this order:
@@ -396,7 +403,8 @@ analytics: **rules** for specific repos and folders, and a **New folders** defau
 table starts with a Default row, marks the row that applies to this folder "← you're here", and lists each
 rule's path or remote and its sessions over the last 30 days. A rule or New folders change made there ends
 with "Undo: /beezi-settings undo", which puts the last change back. `/beezi-login` and the terminal setup ask
-one question, "Where should analytics from this machine go?", and a session in a repo or folder with no
+one question, "Where should they go?": everything to one workspace or to several, or "Let me choose", which
+ticks the repos and folders for each workspace; after "Let me choose", a session in a repo or folder with no
 rule yet asks where that place's analytics go. On the Copilot CLI the status line can end with a Beezi
 badge naming where this folder's analytics go; it is off until `/beezi-settings statusline badge on`.
 Analytics held for an unanswered question wait on disk and are sent once you answer.

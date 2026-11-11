@@ -1,3 +1,4 @@
 import { setTelemetry } from '../lib/commands/telemetry.mjs';
 
-process.stdout.write(`${setTelemetry(process.argv[2])}\n`);
+const message = setTelemetry(process.argv[2]);
+if (message != null) process.stdout.write(`${message}\n`);

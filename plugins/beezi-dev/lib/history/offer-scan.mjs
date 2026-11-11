@@ -132,7 +132,7 @@ const baseName = (dir) => {
 };
 
 // entry → its working directory: the hook-saved one, else the recorded one; null when neither is known.
-function cwdLookup(entries, io) {
+export function cwdLookup(entries, io) {
   const readCwd = cwdReader(entries);
   return (entry) => {
     const state = io.readSessionWorkspace(entry.sessionId);

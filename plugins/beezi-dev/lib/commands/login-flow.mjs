@@ -1,116 +1,81 @@
-// login-flow.mjs: /beezi-dev-login's steps in as few calls as its questions allow. Each call runs from the sign-in (or
-// `--from <step>`) up to the next question, printing each step's output as a block and `next=<step>[ account=<key>]` last.
-import { getAccount, getDefaultKey, parseAccountFlag } from '../accounts/index-store.mjs';
+// login-flow.mjs: /beezi-dev-login's steps up to the tracking question, then (`--from finish`) the rest, as blocks ending in `next=<step>[ account=<key>]`.
+import { parseAccountFlag } from '../accounts/index-store.mjs';
 import { pluginRoot } from '../config/plugin-root.mjs';
-import { isMultiTenant, tenantsOf } from '../workspace/tenants.mjs';
-import { newFoldersOf } from '../workspace/targets.mjs';
-import { createRouteContext, routeKeyForDir } from '../workspace/route-key.mjs';
-import { routeForDir } from '../workspace/routing.mjs';
-import { choiceDir, currentSessionWorkspace } from '../workspace/session-routes.mjs';
-import { pastSessions } from '../history/past-sessions.mjs';
-import { UserError, friendlyMessage } from '../core/errors.mjs';
-import { workspaceLines } from '../ux/workspace-lines.mjs';
+import { UserError } from '../core/errors.mjs';
 import { machineLine } from '../ux/machine-lines.mjs';
+import { NO_PLAN, closingLines } from '../ux/setup/finale.mjs';
+import { createStyle } from '../ux/setup/style.mjs';
+import { applyDefaults, uploadPast } from './setup/finish.mjs';
+import { report } from './setup/output.mjs';
+import { capturePlan } from './setup/plan.mjs';
+import { parseListing, settled } from './setup/routing.mjs';
 import { createRunner } from './setup/runner.mjs';
 import { signInResult } from './setup/sign-in.mjs';
-import { machineValue } from './setup/plan.mjs';
-import { setupOptions } from './setup/routing.mjs';
-import { joined } from './workspace/joined.mjs';
-import { routes } from './workspace/routes.mjs';
-import { rules } from './workspace/rules.mjs';
 
-const FROM_STEPS = ['setup', 'here', 'plan', 'default', 'joined', 'routes'];
-const USAGE = `Usage: login-flow.mjs [--account <ref> --from <${FROM_STEPS.join('|')}>]`;
+const USAGE = 'Usage: login-flow.mjs [--account <ref> [--from finish]]';
+const PLAIN = createStyle({ enabled: false });
 
-function block(tag, result) {
-  const text = `${result.stdout}${result.stderr ? `\n${result.stderr}` : ''}`.trim();
-  console.log([`<${tag}>`].concat(text === '' ? [] : [text], [`</${tag}>`]).join('\n'));
-}
-
-// An in-process workspace.mjs listing as a block; one that throws keeps its ✗ line there and returns null.
-async function listing(tag, key, print) {
-  console.log(`<${tag} account="${key}">`);
-  let result = null;
-  try {
-    result = await print();
-  } catch (error) {
-    console.log(`✗ ${friendlyMessage(error)}`);
-    result = null;
-  }
-  console.log(`</${tag}>`);
-  return result;
+function block(tag, lines) {
+  console.log([`<${tag}>`].concat(lines, [`</${tag.split(' ')[0]}>`]).join('\n'));
 }
 
 function next(step, key) {
   console.log(key == null ? `next=${step}` : machineLine([['next', step], ['account', key]]));
 }
 
-// The one question for an account in several workspaces: its W. lines, the counts, then the options. A count that fails
-// prints its ✗ line and the options without counts: the question still stands.
-function setupQuestion(row, count) {
-  const lines = workspaceLines(row);
-  let history = null;
-  try {
-    history = count(row);
-    lines.push(machineLine([['sessions', history.sessions], ['places', history.places]]));
-  } catch (error) {
-    history = null;
-    lines.push(`✗ ${friendlyMessage(error)}`);
+// A ctx for the setup helpers that collects what they print.
+function collector(run, lines) {
+  return { run, print: (line) => { lines.push(line); } };
+}
+
+// The silent capture: the plan found, or the line saying it was not, after any failure the capture printed.
+async function planStep(key, run) {
+  const lines = [];
+  const plan = await capturePlan(collector(run, lines), key);
+  block('plan', lines.concat([plan === null ? NO_PLAN : `✓ Plan found: ${plan}`]));
+}
+
+// Prints the listing and resolves null when the agent asks the question; else what the finish step shows first.
+async function trackStep(key, run) {
+  const lead = [];
+  const ctx = collector(run, lead);
+  const result = await run('workspace', ['setup', '--account', key]);
+  if (result.code !== 0) {
+    report(ctx, result);
+    return { lead, upload: false, pastFailed: true };
   }
-  const workspaces = tenantsOf(row).map((t) => ({ name: t.name ? t.name : t.id }));
-  setupOptions(workspaces, history).forEach((option, i) => lines.push(`O${i + 1}. ${option.label} — ${option.description}`));
-  console.log([`<setup account="${row.key}">`].concat(lines, ['</setup>']).join('\n'));
+  if (await settled(ctx, key, parseListing(result.stdout))) return { lead, upload: false, pastFailed: false };
+  block(`track account="${key}"`, [result.stdout.trim()]);
+  return null;
 }
 
-// Under Ask me, this session's folder with no rule is asked about next; decided from the routing itself, not the here: line.
-async function hereStops(row, deps) {
-  if (!isMultiTenant(row) || newFoldersOf(row).mode !== 'ask') return false;
-  const dir = deps.hereDir();
-  const ctx = createRouteContext();
-  if (routeKeyForDir(dir, ctx) == null || routeForDir(row, dir, ctx) != null) return false;
-  return (await listing('rules', row.key, async () => { await deps.lists.rules(['--account', row.key]); return true; })) === true;
+// The lines the agent shows verbatim: the lead, the upload line, then the closing lines.
+async function finish(key, run, start) {
+  const lines = start.lead.slice();
+  const ctx = collector(run, lines);
+  if (start.upload) await uploadPast(ctx, key);
+  const on = await applyDefaults(ctx);
+  const closing = closingLines({ style: PLAIN, crash: on.crash, statusline: on.statusline, planFound: true, pastFailed: start.pastFailed });
+  block('finish', lines.length === 0 ? closing.slice(1) : lines.concat(closing));
+  next('done', key);
 }
 
-// The plan capture; true when Copilot or VS Code's GitHub account had no plan, so the skill asks for it.
-async function planStops(row, deps) {
-  const capture = await deps.run('billing-capture', ['--from-copilot', '--via', 'login', '--account', row.key]);
-  block('capture', capture);
-  return capture.code === 0 && (machineValue(capture.stdout, 'plan-source') === 'none' || machineValue(capture.stdout, 'vscode-plan-source') === 'none');
+async function fromPlan(key, run) {
+  await planStep(key, run);
+  const done = await trackStep(key, run);
+  if (done === null) next('track', key);
+  else await finish(key, run, done);
 }
 
-// Each step's stop test, in the order the skill runs them; a step that stops has printed what its question needs.
-const STOPS = {
-  setup: async (row, deps) => {
-    if (!isMultiTenant(row) || newFoldersOf(row).set) return false;
-    setupQuestion(row, deps.pastSessions);
-    return true;
-  },
-  here: hereStops,
-  plan: planStops,
-  // login.mjs names the analytics reader exactly when it is another account.
-  default: async (row) => (await getDefaultKey()) !== row.key,
-  joined: async (row, deps) => (await listing('joined', row.key, () => deps.lists.joined(['--account', row.key]))) > 0,
-  routes: async (row, deps) => (await listing('routes', row.key, () => deps.lists.routes(['--account', row.key]))) > 0,
-};
-
-// From `from` on, the first step that needs a question; 'backfill' when none does.
-async function fromStep(from, key, deps) {
-  const row = await getAccount(key);
-  if (row == null) throw new UserError('That account is not linked on this machine. Run /beezi-dev-login again.');
-  for (const step of FROM_STEPS.slice(FROM_STEPS.indexOf(from))) {
-    if (await STOPS[step](row, deps)) return step;
-  }
-  return 'backfill';
-}
-
-// The browser sign-in, streamed inside its block (its ✗ line too); the key it linked, or null.
-async function signIn(deps) {
+// The browser sign-in, streamed inside its block (its ✗ line too), then the plan and the listing.
+async function signIn(run) {
   console.log('<sign-in>');
-  const result = await deps.run('login', [], { stream: true });
+  const result = await run('login', [], { stream: true });
   console.log('</sign-in>');
   const account = signInResult(result);
-  if (account === null) process.exitCode = 1;
-  return account === null ? null : account.key;
+  if (account !== null) return fromPlan(account.key, run);
+  process.exitCode = 1;
+  next('stop');
 }
 
 // Child scripts get this session's environment and cwd; stderr joins stdout so a ✗ line stays inside its block.
@@ -118,22 +83,12 @@ function defaultRunner() {
   return createRunner({ root: pluginRoot(), env: process.env, sessionKeys: [], cwd: process.cwd(), stdout: process.stdout, stderr: process.stdout });
 }
 
-// deps: `run(name, argv, opts)` (a scripts/<name>.mjs child), `lists` (the workspace.mjs handlers), `pastSessions(row)` for the
-// setup counts and `hereDir()` (this session's folder).
+// deps: `run(name, argv, opts)`, a scripts/<name>.mjs child.
 export async function loginFlow(argv, deps = {}) {
-  const all = Object.assign({
-    lists: { joined, routes, rules },
-    pastSessions: (row) => pastSessions(row),
-    hereDir: () => choiceDir(currentSessionWorkspace()),
-  }, deps);
-  if (all.run == null) all.run = defaultRunner();
+  const run = deps.run == null ? defaultRunner() : deps.run;
   const { account, rest } = await parseAccountFlag(argv);
-  if (account == null && rest.length === 0) {
-    const key = await signIn(all);
-    if (key === null) next('stop');
-    else next(await fromStep('setup', key, all), key);
-    return;
-  }
-  if (account == null || rest.length !== 2 || rest[0] !== '--from' || FROM_STEPS.indexOf(rest[1]) === -1) throw new UserError(USAGE);
-  next(await fromStep(rest[1], account, all), account);
+  if (account == null && rest.length === 0) return signIn(run);
+  if (account != null && rest.length === 0) return fromPlan(account, run);
+  if (account == null || rest.length !== 2 || rest[0] !== '--from' || rest[1] !== 'finish') throw new UserError(USAGE);
+  return finish(account, run, { lead: [], upload: true, pastFailed: false });
 }

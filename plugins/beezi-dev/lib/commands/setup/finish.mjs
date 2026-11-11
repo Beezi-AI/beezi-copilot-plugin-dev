@@ -1,149 +1,35 @@
-// The last steps of the terminal setup: the default account, the past-sessions offer, crash reports and the status line.
-import { usableAccounts } from './account.mjs';
-import { humanLines, lastLine, outputLines, report, reportAll, token } from './output.mjs';
-import { SYNC_COMMAND } from '../../ux/history-offer-lines.mjs';
+// The last steps of the terminal setup: the consented past-sessions upload and the machine defaults.
+import { lastLine, report, token } from './output.mjs';
 
-export const DEFAULT_UNCHANGED = 'The default account is unchanged. /beezi-dev-settings account switches it later.';
-export const CRASH_QUESTION = 'How should Beezi crash reports work?';
-export const STATUS_LINE_QUESTION = "Show Beezi in the Copilot CLI's status line?";
-const OFFER_OPEN = /^<offer account="[^"]*" tenant="([^"]*)">$/;
-const OFFER_CLOSE = '</offer>';
-const GROUP_OPEN = /^<(upload|offers) account="[^"]*"(?: tenant="[^"]*")?>$/;
-const GROUP_CLOSE = /^<\/(?:upload|offers)>$/;
-const ASK_ROW = /^ {4}\? (.+?) · (.+)$/;
-const QUESTION = 'question=';
-const OFFER_TOKEN = /^accept-command=.* --offer ([0-9a-f]+)(?: |$)/;
-export const UPLOAD_OPTIONS = [{ label: 'Upload now' }, { label: 'Not now', description: `run ${SYNC_COMMAND} any time` }];
-export const NONE_OPTION = { label: 'Not now', description: `Nothing more is uploaded. Run ${SYNC_COMMAND} any time.` };
-const CRASH_OPTIONS = [
-  { label: 'Correlate (recommended)', description: 'Crash reports with an installation ID, so support can find yours', mode: 'correlate' },
-  { label: 'On', description: 'Crash reports without an installation ID', mode: 'on' },
-  { label: 'Off', description: 'No crash reports; pending ones are deleted', mode: 'off' },
-  { label: 'Anonymous', description: 'Stay on, and delete the installation ID and the reports that carry it', mode: 'anonymous' },
-];
-
-// A history-offer scan's output: its <upload> blocks' and <offers> block's human lines (the latter with its question or null),
-// every <offer> block, nested or not, as { tenant, lines, question, token }, and the person's lines outside them (notes).
-export function parseOffers(text) {
-  const uploads = [];
-  const offers = [];
-  const outside = [];
-  let combined = null;
-  let group = null;
-  let open = null;
-  outputLines(text).forEach((line) => {
-    const head = OFFER_OPEN.exec(line);
-    const groupHead = GROUP_OPEN.exec(line);
-    if (head !== null) open = { tenant: head[1], lines: [], question: null, token: null };
-    else if (groupHead !== null) {
-      group = { lines: [], question: null };
-      if (groupHead[1] === 'upload') uploads.push(group);
-      else combined = group;
-    } else if (GROUP_CLOSE.test(line)) group = null;
-    else if (open === null && group === null) outside.push(line);
-    else if (open === null && line.indexOf(QUESTION) === 0) group.question = line.slice(QUESTION.length);
-    else if (open === null) group.lines.push(...humanLines(line));
-    else if (line === OFFER_CLOSE) {
-      offers.push(open);
-      open = null;
-    } else if (line.indexOf(QUESTION) === 0) open.question = line.slice(QUESTION.length);
-    else if (OFFER_TOKEN.test(line)) open.token = OFFER_TOKEN.exec(line)[1];
-    else if (open.question === null) open.lines.push(line);
-  });
-  return { uploads, combined, offers, notes: humanLines(outside.join('\n')) };
+// Queues the consented upload and says how many sessions are on their way; a failure prints its own lines first.
+export async function uploadPast(ctx, key) {
+  const result = await ctx.run('history-offer', ['--via', 'setup', '--account', key, '--consented']);
+  if (result.code !== 0) report(ctx, result);
+  const line = lastLine(result.stdout, /^uploading=\d+ /);
+  const n = line === null ? 0 : Number(token(line, 'uploading'));
+  if (n === 1) ctx.print('✓ 1 past session is uploading in the background');
+  if (n > 1) ctx.print(`✓ ${n} past sessions are uploading in the background`);
 }
 
-// The "    ? W · N sessions · hides" rows as options: the workspace as label, the rest as description.
-function askOptions(lines) {
-  return lines.map((line) => ASK_ROW.exec(line)).filter((row) => row !== null)
-    .map((row) => ({ label: row[1], description: row[2] }));
-}
-
-function answerTarget(key, offers) {
-  return ['--account', key, '--tenant', offers.map((offer) => offer.tenant).join(',')];
-}
-
-// One pre-ticked multi-select for every asked workspace plus a last exclusive "Not now": the ticked workspaces accept in one run,
-// the rest (all on "Not now" or no answer) decline in one.
-async function answerCombined(ctx, key, question, offers, options) {
-  const opts = { picked: offers.map((offer, i) => i), exclusive: [options.length] };
-  const picked = await ctx.ask.chooseMany(question, options.concat([NONE_OPTION]), opts);
-  const ticked = picked === null ? [] : picked;
-  const accepted = offers.filter((offer, i) => ticked.indexOf(i) !== -1);
-  const declined = offers.filter((offer, i) => ticked.indexOf(i) === -1);
-  if (accepted.length > 0) {
-    const tokens = accepted.map((offer) => offer.token).join(',');
-    reportAll(ctx, await ctx.run('history-offer', ['accept', ...answerTarget(key, accepted), '--offer', tokens]));
-  }
-  if (declined.length > 0) reportAll(ctx, await ctx.run('history-offer', ['decline', ...answerTarget(key, declined)]));
-}
-
-// Each block's lines styled by line shape; 2+ asked workspaces get one pre-ticked multi-select, else each offer a menu on
-// "Upload now"; only that row accepts, and no answer declines.
-export async function uploadHistory(ctx, key) {
-  const scan = await ctx.run('history-offer', ['--via', 'setup', '--account', key]);
-  const { uploads, combined, offers, notes } = parseOffers(scan.stdout);
-  const printGroups = () => uploads.concat(combined === null ? [] : [combined]).forEach((group) => group.lines.forEach((line) => ctx.printOffer(line)));
-  // A scan that fails after printing a block still shows what it uploads, then the error from its other lines.
-  if (scan.code !== 0) {
-    printGroups();
-    report(ctx, { ...scan, stdout: notes.join('\n') });
-    return;
-  }
-  notes.forEach((line) => ctx.print(line));
-  printGroups();
-  if (combined !== null && combined.question !== null) {
-    await answerCombined(ctx, key, combined.question, offers, askOptions(combined.lines));
-    return;
-  }
-  for (const offer of offers) {
-    offer.lines.forEach((line) => ctx.printOffer(line));
-    const target = ['--account', key, '--tenant', offer.tenant];
-    const picked = await ctx.ask.choose(offer.question, UPLOAD_OPTIONS, { defaultIndex: 0 });
-    const answer = picked === 0 ? ['accept', ...target, '--offer', offer.token] : ['decline', ...target];
-    reportAll(ctx, await ctx.run('history-offer', answer));
-  }
-}
-
-// login Step 4: asked only when the sign-in left another account as the default reader.
-export async function offerDefault(ctx, account) {
-  if (!account.readsElsewhere) return;
-  const listing = await ctx.run('accounts', ['list']);
-  const row = usableAccounts(listing.stdout).find((a) => a.key === account.key);
-  const name = row === undefined ? 'the account you just linked' : row.description;
-  const yes = await ctx.ask.confirm(`Make ${name} the account /beezi-dev-analytics reads from?`, false);
-  if (yes === true) reportAll(ctx, await ctx.run('accounts', ['use', account.key]));
-  if (yes === false) ctx.print(DEFAULT_UNCHANGED);
-}
-
-// The options with the current mode marked as the default.
-export function crashChoice(current) {
-  const options = CRASH_OPTIONS.map((option) => (option.mode === current
-    ? { label: option.label, description: `${option.description}, current setting`, mode: option.mode }
-    : option));
-  return { options, defaultIndex: CRASH_OPTIONS.findIndex((option) => option.mode === current) };
-}
-
-// Runs telemetry.mjs for every answer, the current mode included.
-async function askCrashReports(ctx, current) {
-  const choice = crashChoice(current);
-  const picked = await ctx.ask.choose(CRASH_QUESTION, choice.options, { defaultIndex: choice.defaultIndex });
-  if (picked === null) return;
-  report(ctx, await ctx.run('telemetry', [choice.options[picked].mode]));
-}
-
-// Crash reports, then the status line when it is off, from `settings.mjs keys`.
-export async function askMachineSettings(ctx) {
+// The `crash=… statusline=…` line of `settings keys`, or null.
+async function machineLine(ctx) {
   const keys = await ctx.run('settings', ['keys']);
-  if (keys.code !== 0) {
-    report(ctx, keys);
-    return;
+  if (keys.code !== 0) report(ctx, keys);
+  return lastLine(keys.stdout, /^crash=/);
+}
+
+// Crash reports on for an undecided machine and the status line installed when off; resolves what is on afterwards.
+export async function applyDefaults(ctx) {
+  const telemetry = await ctx.run('telemetry', ['default']);
+  if (telemetry.code !== 0) report(ctx, telemetry);
+  let line = await machineLine(ctx);
+  if (line !== null && token(line, 'statusline') === 'off') {
+    // A settings file the installer can't parse is not an error here: the status line just stays off.
+    await ctx.run('statusline-install', []);
+    line = await machineLine(ctx);
   }
-  const line = lastLine(keys.stdout, /^crash=/);
-  if (line === null) return;
-  await askCrashReports(ctx, token(line, 'crash'));
-  if (token(line, 'statusline') !== 'off') return;
-  if (await ctx.ask.confirm(STATUS_LINE_QUESTION, true) === true) {
-    report(ctx, await ctx.run('statusline-install', []));
-  }
+  return {
+    crash: line !== null && token(line, 'crash') !== 'off',
+    statusline: line !== null && token(line, 'statusline') === 'on',
+  };
 }

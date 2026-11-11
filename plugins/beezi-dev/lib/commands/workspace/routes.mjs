@@ -12,6 +12,14 @@ import { machineLine } from '../../ux/machine-lines.mjs';
 import { resolveSession } from '../../workspace/session-routes.mjs';
 import { USAGE, pastSessionOptions, parseSessionFlag, selectedRows } from './args.mjs';
 
+export function printNoFolder(lost) {
+  if (lost > 0) {
+    console.log(lost === 1
+      ? '1 other past session has no recorded folder and is not sent.'
+      : `${lost} other past sessions have no recorded folder and are not sent.`);
+  }
+}
+
 // Returns how many P lines it printed.
 export async function routes(argv) {
   const { session, rest: afterSession } = parseSessionFlag(argv);
@@ -38,12 +46,7 @@ export async function routes(argv) {
       }
       console.log(commandLine('all-command', `rule add-all --account ${row.key} <tenants>`));
     }
-    const lost = planned.noDirectory;
-    if (lost > 0) {
-      console.log(lost === 1
-        ? '1 other past session has no recorded folder and is not sent.'
-        : `${lost} other past sessions have no recorded folder and are not sent.`);
-    }
+    printNoFolder(planned.noDirectory);
   }
   console.log(machineLine([['routes', total]]));
   return total;

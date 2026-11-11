@@ -12,17 +12,23 @@ const MODES = ['sync', 'backfill'];
 const isMap = (value) => value != null && typeof value === 'object' && !Array.isArray(value);
 const isIdList = (ids) => Array.isArray(ids) && ids.every((id) => typeof id === 'string' && id !== '');
 
+// The setup listing's record, or null when it is missing or malformed.
+function setupOf(value) {
+  if (!isMap(value) || !isIdList(value.sessionIds) || !isIdList(value.tenantIds) || !isMap(value.kinds) || typeof value.listedAt !== 'string') return null;
+  return { ...value, answeredAt: typeof value.answeredAt === 'string' ? value.answeredAt : null };
+}
+
 function readRecord(key) {
   const raw = readJson(historyOfferFile(key), null);
-  if (raw == null || raw.version !== RECORD_VERSION) return { scans: {}, declined: {} };
-  return { scans: isMap(raw.scans) ? raw.scans : {}, declined: isMap(raw.declined) ? raw.declined : {} };
+  if (raw == null || raw.version !== RECORD_VERSION) return { scans: {}, declined: {}, setup: null };
+  return { scans: isMap(raw.scans) ? raw.scans : {}, declined: isMap(raw.declined) ? raw.declined : {}, setup: setupOf(raw.setup) };
 }
 
 // createDir off: a missing accounts/<key>/ means a logout won the race, and this write must not bring it back.
-function writeRecord(key, { scans, declined }) {
+function writeRecord(key, { scans, declined, setup }) {
   try {
-    if (Object.keys(scans).length === 0 && Object.keys(declined).length === 0) removePath(historyOfferFile(key), { force: true });
-    else writeJsonSecure(historyOfferFile(key), { version: RECORD_VERSION, scans, declined }, { createDir: false });
+    if (Object.keys(scans).length === 0 && Object.keys(declined).length === 0 && setup == null) removePath(historyOfferFile(key), { force: true });
+    else writeJsonSecure(historyOfferFile(key), { version: RECORD_VERSION, scans, declined, ...(setup == null ? {} : { setup }) }, { createDir: false });
   } catch { /* a failed write leaves the previous record, which the next scan or decline rewrites */ }
 }
 
@@ -93,4 +99,34 @@ export function forgetDeclined(key, tenantId, ids) {
 export function declinedIds(key, tenantId, changedAt) {
   const stored = declinedEntry(readRecord(key), tenantId);
   return stored == null || changedSince(changedAt, stored.changedAt) ? new Set() : new Set(stored.ids);
+}
+
+// The setup listing's consent record: the ids it listed, each workspace's hidden kinds, its workspaces in order and its answer time.
+const sameList = (a, b) => a.length === b.length && a.every((id, i) => id === b[i]);
+
+// Replaces the setup listing's record; resolves whether an unanswered one for the same workspaces, in order, was there before.
+export function saveSetupListing(key, { sessionIds, kinds, tenantIds, listedAt }) {
+  return mutateRecord(key, (record) => {
+    const before = record.setup;
+    record.setup = { sessionIds, kinds, tenantIds, listedAt, answeredAt: null };
+    return before != null && before.answeredAt == null && sameList(before.tenantIds, tenantIds);
+  });
+}
+
+export function answerSetupListing(key, answeredAt) {
+  return mutateRecord(key, (record) => {
+    if (record.setup != null) record.setup.answeredAt = answeredAt;
+  });
+}
+
+// Deletes and returns the answered setup record ({ sessionIds, kinds: tenantId → hidden kinds }); null, deleting nothing, without one.
+export function takeAnsweredSetup(key) {
+  return mutateRecord(key, (record) => {
+    const setup = record.setup;
+    if (setup == null || setup.answeredAt == null) return null;
+    record.setup = null;
+    const kinds = {};
+    Object.keys(setup.kinds).forEach((tenantId) => { kinds[tenantId] = hiddenKindsOf(setup.kinds[tenantId]); });
+    return { sessionIds: setup.sessionIds, kinds };
+  });
 }
