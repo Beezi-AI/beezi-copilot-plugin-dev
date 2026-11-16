@@ -1,0 +1,19 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "beezi-analytics-staging",
+  "version": "0.1.0-staging.6355",
+  "description": "See your Beezi usage analytics in GitHub Copilot: spend, sessions, status and recommendations for the last 7 or 30 days. Read-only; sign in with your Beezi account. — staging environment build.",
+  "author": {
+    "name": "Beezi",
+    "url": "https://beezi.ai"
+  },
+  "homepage": "https://beezi.ai",
+  "repository": "https://github.com/Beezi-AI/beezi-copilot-plugin",
+  "license": "Apache-2.0",
+  "keywords": [
+    "analytics",
+    "token-usage",
+    "beezi",
+    "copilot"
+  ]
+}

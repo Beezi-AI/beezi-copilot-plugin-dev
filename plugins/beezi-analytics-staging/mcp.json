@@ -1,0 +1,12 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "beezi-staging": {
+      "type": "streamable-http",
+      "url": "https://beezi-api-staging.azurewebsites.net/api/mcp",
+      "headers": {
+        "X-Beezi-Agent": "copilot"
+      }
+    }
+  }
+}
