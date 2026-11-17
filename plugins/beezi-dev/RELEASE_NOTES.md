@@ -1,5 +1,11 @@
 # Beezi plugin release notes
 
+## 0.4.1 (2026-11-17) — Setup and past-session checks wait out a busy moment
+
+### Fixed
+- **Setup waits for a busy Beezi job** — setup no longer gives up on your past sessions when another Beezi job is briefly busy. It tries again for up to a minute.
+- **Past sessions are checked again within minutes** — when another Beezi job was busy, the background check of past sessions now tries again in minutes, not hours.
+
 ## 0.4.0 (2026-11-11) — One-question setup
 
 ### New

@@ -1,6 +1,6 @@
 // history-offer.mjs count phase and consent, shared by the offer and the setup's consented upload (`--consented`).
 import { prepareRowScan } from '../../history/offer-scan.mjs';
-import { offerScan } from '../../history/setup-places.mjs';
+import { offerScan, retryWhileBusy } from '../../history/setup-places.mjs';
 import { createRunCache as _createRunCache } from '../../history/run-cache.mjs';
 import { startHistoryWorker } from '../../history/pending-trigger.mjs';
 import { declinedIds, forgetDeclined, takeAnsweredSetup, writeOfferScan } from '../../workspace/history-offer-record.mjs';
@@ -149,7 +149,7 @@ export async function consentedUpload(row, sessionId, deps) {
   const setup = await pick(deps.takeAnsweredSetup, takeAnsweredSetup)(row.key);
   if (setup == null) return printUploading([], false);
   const cx = rowContext(row, { via: 'setup', sessionId }, deps);
-  const counted = await countRow(row, cx, offerableTenantIds(row), deps);
+  const counted = await countRow(row, cx, offerableTenantIds(row), { ...deps, runAudit: retryWhileBusy(deps.runAudit, deps) });
   if (cx.failed || counted.length === 0) return printUploading([], cx.failed);
   const { owed, failed } = await oweListed(row, counted, setup, deps);
   if (owed.length > 0 && !(await startHistoryWorker(row.key, deps))) return printUploading([], true);
