@@ -10,6 +10,7 @@ import { runAudit, planHistoryRuns } from '../history/history-run.mjs';
 import { createRunCache } from '../history/run-cache.mjs';
 import { sessionStartMs, linkCutoffMs } from '../history/offer-scan.mjs';
 import { SYNC_MODE } from '../contract/history.mjs';
+import { HISTORY_BUSY_RETRY_MS } from '../workspace/pending-history.mjs';
 import { noHook, historySettlements, laggingReplays, settledByAll, postLinkRecipients } from './watch-planner.mjs';
 import { recipientsFor, sessionCwd } from './watch-recipients.mjs';
 import { finiteNumber } from '../core/guards.mjs';
@@ -245,8 +246,9 @@ async function syncAccountHistory(pass, row, batch, io) {
   const historyPlan = io.planHistoryRuns(row, { onlySessionIds: batch.map((entry) => entry.sessionId) });
   const executed = await runHistoryRuns(pass, row, historyPlan, batch, io);
   const settled = recordSettlements(pass, row, historyPlan, executed, batch);
-  // A busy history lease is fine: the user's own run covers it.
-  pass.record.historyAt[row.key] = Date.now();
+  // A busy run backdates the stamp so the pass is due again HISTORY_BUSY_RETRY_MS from now.
+  const busy = executed.some(({ result }) => result.reason === 'busy');
+  pass.record.historyAt[row.key] = busy ? Date.now() - HISTORY_INTERVAL_MS + HISTORY_BUSY_RETRY_MS : Date.now();
   pass.dirty = true;
   pass.summary.history += 1;
   const results = executed.map((run) => run.result);

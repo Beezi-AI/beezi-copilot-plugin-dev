@@ -2,7 +2,9 @@
 import fs from 'fs';
 import { cwdLookup, prepareRowScan, scanOffer as _scanOffer, sessionStartMs } from './offer-scan.mjs';
 import { createRunCache as _createRunCache } from './run-cache.mjs';
+import { runAudit as _runAudit } from './history-run.mjs';
 import { pastSessionsFor } from '../core/anon-target.mjs';
+import { sleep as _sleep } from '../core/async.mjs';
 import { readTrackingState } from '../state/tracking.mjs';
 import { readSessionHead as _readSessionHead } from '../sources/cli/session-files.mjs';
 import { isMultiTenant, offerableTenantIds, tenantsOf } from '../workspace/tenants.mjs';
@@ -14,6 +16,28 @@ import { isLineSafePlace, shortLabel } from '../workspace/rule-model.mjs';
 import { readSessionWorkspace as _readSessionWorkspace } from '../workspace/session-routes.mjs';
 
 const pick = (value, fallback) => (value == null ? fallback : value);
+
+export const SETUP_BUSY_WAIT_MS = 60000;
+export const SETUP_BUSY_POLL_MS = 2000;
+const SETUP_BUSY_MAX_SLEEPS = SETUP_BUSY_WAIT_MS / SETUP_BUSY_POLL_MS;
+
+// Wraps runAudit: a busy answer runs it again every poll until the wait has passed since the first call or the sleeps run out, shared by every call.
+export function retryWhileBusy(runAudit, deps) {
+  const audit = pick(runAudit, _runAudit);
+  const now = pick(deps.now, Date.now);
+  const sleep = pick(deps.sleep, _sleep);
+  let startMs = null;
+  let sleeps = 0;
+  return async (runDeps, options) => {
+    if (startMs == null) startMs = now();
+    for (;;) {
+      const result = await audit(runDeps, options);
+      if (result.reason !== 'busy' || sleeps >= SETUP_BUSY_MAX_SLEEPS || now() - startMs >= SETUP_BUSY_WAIT_MS) return result;
+      sleeps += 1;
+      await sleep(SETUP_BUSY_POLL_MS);
+    }
+  };
+}
 
 // One workspace's scan, writing nothing → { scan, places }; the offer scope's gate may skip it (null) and its declines stay out, sync lists them (PK2).
 export async function offerScan(row, tenantId, cx, deps = {}) {
@@ -78,7 +102,7 @@ const byListOrder = (a, b) => outsideLast(a) - outsideLast(b) || b.sessions - a.
 // Places of sessions the consented upload would send before rules, by sessions, outside last; tracked = the rule's ids, null without one or when its sessions' rules differ.
 export async function setupPlaces(row, deps = {}) {
   const prepared = await prepareRowScan(row, { ...deps, planHistoryRuns: unruledPlan });
-  const { ids, failed } = await plannedIds(row, prepared, deps);
+  const { ids, failed } = await plannedIds(row, prepared, { ...deps, runAudit: retryWhileBusy(deps.runAudit, deps) });
   if (failed != null) return { failed };
   const ctx = createRouteContext();
   const eligible = eligibleSessions(ids, prepared.listed, deps, ctx);
