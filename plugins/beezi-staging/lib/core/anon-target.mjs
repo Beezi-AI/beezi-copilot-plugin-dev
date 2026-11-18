@@ -73,18 +73,6 @@ export function hasKind(block, kind) {
   return kindsOf(block).indexOf(kind) !== -1;
 }
 
-function kindsMapOf(on) {
-  const map = {};
-  for (const k of ANON_KINDS) map[k] = on.indexOf(k) !== -1;
-  return map;
-}
-
-// A missing block becomes a keyless one, so every reader fails closed.
-function overlaid(block, tenantId, kinds) {
-  if (block == null) return { tenantId, kinds: kindsMapOf(kinds), key: null, machineName: null };
-  return { ...block, kinds: kindsMapOf(unionOf(kindsOf(block), kinds)) };
-}
-
 function targetIdOf(session, tenantId) {
   if (tenantId != null) return tenantId;
   const tenants = session.tenants;
@@ -101,10 +89,9 @@ function withBlock(session, tenantId, block) {
   return { ...session, tenants: (tenants == null ? [] : tenants).concat([{ id: tenantId, anonymization: block }]) };
 }
 
-export function withHiddenKinds(session, tenantId, kinds) {
-  if (kinds.length === 0) return session;
-  const id = targetIdOf(session, tenantId);
-  return withBlock(session, id, overlaid(anonymizationFor(session, tenantId), id, kinds));
+// The session with `block` as the one anonymizationFor(session, tenantId) reads; the input stays untouched.
+export function withAnonymization(session, tenantId, block) {
+  return withBlock(session, targetIdOf(session, tenantId), block);
 }
 
 export function anonymizationScope(row) {

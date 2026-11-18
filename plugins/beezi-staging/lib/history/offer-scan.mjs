@@ -4,7 +4,7 @@ import { runAudit as _runAudit, planHistoryRuns as _planHistoryRuns } from './hi
 import { createRunCache as _createRunCache } from './run-cache.mjs';
 import { cwdReader, usableEntries, withVscodeEntries } from './candidates.mjs';
 import { BackfillHalt, SYNC_MODE } from '../contract/history.mjs';
-import { PAST_UPLOAD, pastSessionsFor } from '../core/anon-target.mjs';
+import { PAST_UPLOAD, anonymizationFor, kindsOf, pastSessionsFor } from '../core/anon-target.mjs';
 import { normPath } from '../core/fs-paths.mjs';
 import { isLineSafe } from '../core/text.mjs';
 import { listSessionFiles as _listSessionFiles, readSessionHead as _readSessionHead } from '../sources/cli/session-files.mjs';
@@ -178,12 +178,13 @@ function statusOf(result, syncMode) {
   return 'ok';
 }
 
-// → { status, sessionIds, count, firstMs, lastMs, folders, mode, audit, reason, upload, changedAt }; counts only what the dry run planned.
+// → { status, sessionIds, count, firstMs, lastMs, folders, mode, audit, reason, upload, changedAt, kinds }; counts only what the dry run planned.
 // `upload` is true only when this run's whoami says the workspace's owner chose upload without asking; `changedAt` is that answer's.
+// `kinds` are the kinds that answer's block hides for the workspace, null when it has none.
 export async function scanOffer(row, tenantId, { scope, places = null, unrouted = false, excludeIds = null, prepared = null }, io = {}) {
   const deps = resolveIo(io);
   const { plan, listed, live } = prepared == null ? await prepareRowScan(row, io) : prepared;
-  const nothing = { status: 'ok', ...empty(), mode: SYNC_MODE, audit: false, reason: null, upload: false, changedAt: null };
+  const nothing = { status: 'ok', ...empty(), mode: SYNC_MODE, audit: false, reason: null, upload: false, changedAt: null, kinds: null };
   const run = runFor(row, tenantId, unrouted, plan);
   if (run == null) return nothing;
   const cwdOf = cwdLookup(listed, deps);
@@ -200,7 +201,9 @@ export async function scanOffer(row, tenantId, { scope, places = null, unrouted 
   const fresh = who != null && who.valid === true ? pastSessionsFor(who, tenantId) : null;
   const upload = fresh != null && fresh.choice === PAST_UPLOAD;
   const changedAt = fresh == null ? null : fresh.changedAt;
-  const done = (status, summary, reason) => ({ status, ...summary, mode, audit: audit === true, reason, upload, changedAt });
+  const block = fresh == null ? null : anonymizationFor(who, tenantId);
+  const kinds = block == null ? null : kindsOf(block);
+  const done = (status, summary, reason) => ({ status, ...summary, mode, audit: audit === true, reason, upload, changedAt, kinds });
   if (audit == null) return done('unavailable', empty(), null);
   const cutoffMs = scope === 'offer' && !audit ? linkCutoffMs(row, tenantId, deps.readTracking(row.key)) : undefined;
   const starts = new Map();
