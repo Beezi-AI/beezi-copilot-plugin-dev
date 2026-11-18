@@ -3,11 +3,12 @@ import fs from 'fs';
 import { runAudit as _runAudit, planHistoryRuns as _planHistoryRuns } from './history-run.mjs';
 import { createRunCache as _createRunCache } from './run-cache.mjs';
 import { isCleanSync } from './run-result.mjs';
+import { createProgressWriter as _createProgressWriter } from './upload-progress.mjs';
 import { BACKFILL_MODE, REFUSED_HALTS, REFUSED_REASONS, sessionStartMs } from './offer-scan.mjs';
 import { BackfillHalt, SYNC_MODE } from '../contract/history.mjs';
 import { readSessionHead as _readSessionHead } from '../sources/cli/session-files.mjs';
 import { clearOfferScan as _clearOfferScan } from '../workspace/history-offer-record.mjs';
-import { isMultiTenant } from '../workspace/tenants.mjs';
+import { isMultiTenant, tenantById } from '../workspace/tenants.mjs';
 import { acceptedOf, pendingHistoryOf, waitingOnRecent, RunOutcome, SettleState } from '../workspace/pending-history.mjs';
 import { notePendingAttempt, settlePendingHistory } from '../workspace/settings-store.mjs';
 import { AccountStatus, listAccounts } from '../accounts/index-store.mjs';
@@ -55,9 +56,18 @@ function plannedRuns(row, entries, plan) {
   });
 }
 
-// One workspace's run → { outcome, sent, skipped }; a throwing run is a failed one.
-async function runOne(key, entry, options, io, runCache) {
-  const result = await io.runAudit({ runCache }, { ...options, account: key }).catch(() => null);
+export function workspaceName(row, tenantId) {
+  const tenant = tenantById(row, tenantId);
+  if (tenant != null && tenant.name) return tenant.name;
+  return row.tenantName || tenantId;
+}
+
+// A progress-record write is best-effort: one that fails never fails or changes the upload.
+function quietly(write) {
+  try { write(); } catch { /* best-effort */ }
+}
+
+function runOf(result, entry, io) {
   if (result == null) return { outcome: RunOutcome.FAILED, sent: 0, skipped: 0 };
   const starts = Array.isArray(result.recent) ? result.recent.map((r) => sessionStartMs({ transcriptPath: r.path }, io)) : [];
   return {
@@ -65,6 +75,23 @@ async function runOne(key, entry, options, io, runCache) {
     sent: result.sessionsImported || 0,
     skipped: (result.deferredGap || 0) + (result.deferredOverlap || 0) + (result.deferredUsageMode || 0),
   };
+}
+
+// One workspace's run → { outcome, sent, skipped }, written to its progress record; a throwing run is a failed one.
+async function runOne(key, entry, options, io, runCache, writer) {
+  let counts = { processed: 0, total: 0, sent: 0 };
+  const onProgress = (p) => {
+    counts = { processed: p.processed, total: p.total, sent: p.sessionsImported };
+    quietly(() => writer.update(counts));
+  };
+  const run = runOf(await io.runAudit({ runCache, onProgress }, { ...options, account: key }).catch(() => null), entry, io);
+  // A run that met another run's lock leaves that run's record alone.
+  if (run.outcome === RunOutcome.BUSY) return run;
+  const final = { processed: counts.processed, total: counts.total, sent: run.sent };
+  // A failed or refused run marks its record failed, so a follower never shows it as uploaded.
+  if (run.outcome !== RunOutcome.CLEAN && run.outcome !== RunOutcome.WAITING) final.failed = true;
+  quietly(() => writer.finish(final));
+  return run;
 }
 
 // Compare-and-clear on the scan the yes accepted, so a scan written since survives; best-effort.
@@ -83,6 +110,7 @@ export async function runPendingHistory(key, deps = {}) {
     stat: pick(deps.statImpl, (file) => fs.statSync(file)),
     clearOfferScan: pick(deps.clearOfferScan, _clearOfferScan),
     now: pick(deps.now, () => Date.now()),
+    createProgressWriter: pick(deps.createProgressWriter, _createProgressWriter),
   };
   const { accounts } = io;
   // Taken before the row is read, so a request refreshed after this read is never counted as covered.
@@ -99,7 +127,11 @@ export async function runPendingHistory(key, deps = {}) {
   for (const { entry, scannedAt, options } of plannedRuns(row, entries, io.planHistoryRuns(row))) {
     // Busy once, busy for the rest of the pass; a workspace with no run to make settles as refused.
     let run = { outcome: busy ? RunOutcome.BUSY : RunOutcome.REFUSED, sent: 0, skipped: 0 };
-    if (!busy && options != null) run = await runOne(key, entry, options, io, runCache);
+    if (!busy && options != null) {
+      // Keyed by the entry's tenant, the id setup's `tenants=` prints, even when a single workspace runs headerless.
+      const writer = io.createProgressWriter({ key, tenantId: entry.tenantId, workspace: workspaceName(row, entry.tenantId) });
+      run = await runOne(key, entry, options, io, runCache, writer);
+    }
     busy = run.outcome === RunOutcome.BUSY;
     const state = await accounts.settlePendingHistory(key, entry.tenantId, run, { plannedAtMs, nowMs: io.now() });
     if (state === SettleState.CLEARED || state === SettleState.GAVE_UP) await clearScan(io, key, entry.tenantId, scannedAt);
