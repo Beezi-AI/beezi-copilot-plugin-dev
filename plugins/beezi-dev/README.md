@@ -78,7 +78,9 @@ linking, which is tracked live from then on. `/beezi-login` and the terminal set
 summary of the past sessions they found: how many, from which dates and folders, what each one sends and
 which details each workspace hides. Then they ask one question: what to track. Your answer is the yes:
 right after it, the past sessions that summary listed, from the repos and folders you chose to track,
-upload in the background, with at least the details hidden that the summary said were hidden. A
+upload in the background, hiding the details the workspace hides when they are sent, even if its owner
+changed that after the summary. If Beezi can't confirm what the workspace hides right then, it sends
+nothing and tries again later. A
 workspace whose owner chose never to upload past sessions gets none. Later, a new session or
 `/beezi-sync` shows the same kind of summary for past sessions not uploaded yet and uploads them only
 after you answer "Upload now". "Not now" uploads nothing and is remembered until the workspace's owner

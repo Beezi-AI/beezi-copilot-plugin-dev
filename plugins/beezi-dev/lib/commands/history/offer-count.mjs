@@ -6,7 +6,7 @@ import { startHistoryWorker } from '../../history/pending-trigger.mjs';
 import { workspaceName } from '../../history/pending-history-run.mjs';
 import { declinedIds, forgetDeclined, takeAnsweredSetup, writeOfferScan } from '../../workspace/history-offer-record.mjs';
 import { readTrackingState } from '../../state/tracking.mjs';
-import { anonymizationFor, kindsOf, pastSessionsFor, unionOf } from '../../core/anon-target.mjs';
+import { anonymizationFor, kindsOf, pastSessionsFor } from '../../core/anon-target.mjs';
 import { UserError } from '../../core/errors.mjs';
 import { INDEX_LOCK_BUSY } from '../../accounts/index-store.mjs';
 import { isMultiTenant, offerableTenantIds } from '../../workspace/tenants.mjs';
@@ -77,14 +77,15 @@ async function countOne(row, tenantId, cx, deps) {
   }
   if (scan.count === 0) return (await lockedWrite(() => clearHistoryOfferPlaces(row.key, tenantId))) ? null : unchecked();
   const { sessionIds, mode, count, firstMs, lastMs, audit } = scan;
-  const shownKinds = kindsOf(anonymizationFor(row, tenantId));
+  // The question shows what the scan's fresh whoami hides, else the cached row's.
+  const shownKinds = scan.kinds != null ? scan.kinds : kindsOf(anonymizationFor(row, tenantId));
   const record = { sessionIds, mode, unrouted: cx.unrouted, count, firstMs, lastMs, audit, scannedAt: new Date().toISOString(), shownKinds };
   // An index-lock timeout on the record prints this workspace's ✗ line in place of its block.
   if (!(await lockedWrite(() => pick(deps.writeOfferScan, writeOfferScan)(row.key, tenantId, record)))) return unchecked();
   // In sync, a session it would upload that was declined under the scan's fresh changedAt asks first (R18).
   const freshDeclined = cx.scope === 'sync' && scan.upload === true ? declinedIds(row.key, tenantId, scan.changedAt) : new Set();
-  // No-ask only on the scan's fresh `upload` (R17); a --tenant override (R6) and an audit workspace (R15) ask first.
-  const upload = scan.upload === true && !cx.override && audit !== true && !sessionIds.some((id) => freshDeclined.has(id));
+  // No-ask only on the scan's fresh `upload` (R17); a --tenant override (R6) asks first.
+  const upload = scan.upload === true && !cx.override && !sessionIds.some((id) => freshDeclined.has(id));
   return { tenantId, record, folders: scan.folders, changedAt, upload };
 }
 
@@ -98,14 +99,12 @@ export async function countRow(row, cx, tenantIds, deps) {
   return counted;
 }
 
-// Consents to exactly the record's sessions and forgets their declines; the entry carries the record's ids and shown kinds.
+// Consents to exactly the record's sessions and forgets their declines; the run hides what the workspace hides when it sends (R5).
 export async function consentOffer(row, tenantId, record, deps) {
   const accepted = {
     sessionIds: record.sessionIds,
     mode: record.mode,
     unrouted: record.unrouted,
-    // Kinds shown hidden stay hidden at the yes (PK1), plus any turned on since.
-    hiddenKinds: unionOf(record.shownKinds, kindsOf(anonymizationFor(row, tenantId))),
     scannedAt: record.scannedAt,
   };
   await pick(deps.consentPastSessions, consentPastSessions)(row.key, tenantId, { changedAt: pastSessionsFor(row, tenantId).changedAt, accepted });
@@ -114,16 +113,15 @@ export async function consentOffer(row, tenantId, record, deps) {
   } catch { /* best-effort: a stale decline only hides these ids from a session-start offer */ }
 }
 
-// Owes each counted workspace the listed sessions routed to it now, under the kinds the listing showed it; → { owed: [{ tenantId, sessionIds }], failed: a consent timed out }.
+// Owes each counted workspace the listing named its listed sessions routed to it now; → { owed: [{ tenantId, sessionIds }], failed: a consent timed out }.
 async function oweListed(row, counted, setup, deps) {
   const listed = new Set(setup.sessionIds);
   const owed = [];
   let failed = false;
   for (const item of counted) {
-    const shownKinds = setup.kinds[item.tenantId];
     const sessionIds = item.record.sessionIds.filter((id) => listed.has(id));
-    if (shownKinds == null || sessionIds.length === 0) continue;
-    if (await lockedWrite(() => consentOffer(row, item.tenantId, { ...item.record, sessionIds, shownKinds }, deps))) owed.push({ tenantId: item.tenantId, sessionIds });
+    if (setup.kinds[item.tenantId] == null || sessionIds.length === 0) continue;
+    if (await lockedWrite(() => consentOffer(row, item.tenantId, { ...item.record, sessionIds }, deps))) owed.push({ tenantId: item.tenantId, sessionIds });
     else {
       console.log(uncheckedLine(row, item.tenantId));
       failed = true;

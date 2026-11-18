@@ -40,7 +40,7 @@ function runOptions(multi, entry, accepted, plan) {
     sessionRoutes: run.sessionRoutes,
     excludedSessionIds: run.excludedSessionIds,
     onlySessionIds: accepted.sessionIds,
-    hiddenKinds: accepted.hiddenKinds,
+    freshAnonymization: true,
   };
   if (accepted.mode !== BACKFILL_MODE) options.mode = SYNC_MODE;
   return options;

@@ -1,5 +1,11 @@
 # Beezi plugin release notes
 
+## 0.4.3 (2026-11-18) — Past sessions follow the owner's settings
+
+### Improved
+- **Uploads hide what the workspace hides now** — past sessions you agreed to upload are sent with the details the workspace's owner hides at the time they are sent. A detail the owner stopped hiding after you agreed is sent as it is. When Beezi can't confirm the workspace's settings at that moment, it sends nothing and tries again later. The question also shows what the workspace hides right now.
+- **Audit workspaces follow the owner's choice** — an audit workspace whose owner chose upload without asking now uploads past sessions with a notice instead of a question, like any other workspace.
+
 ## 0.4.2 (2026-11-18) — Upload progress
 
 ### New

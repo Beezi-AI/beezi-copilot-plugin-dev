@@ -161,7 +161,7 @@ async function runAuditLeased(lease, deps, options) {
   return result;
 }
 
-// Sets run.anonKinds (the workspace's kinds now, plus any shown at the question) and run.anonKey; false when a kind is on but no key reached this machine.
+// Sets run.anonKinds (the workspace's kinds now, whoami's for a past-session upload) and run.anonKey; false when a kind is on but no key reached this machine.
 function resolveAnonymization(run) {
   const block = anonymizationFor(run.session, run.tenantId);
   run.anonKinds = kindsOf(block);

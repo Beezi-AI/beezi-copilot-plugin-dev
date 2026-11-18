@@ -129,7 +129,7 @@ export function offerTrackingDisabled(row, tenantId, tracking) {
   return tracking != null && tracking.trackingMode === TrackingMode.DISABLED;
 }
 
-// The exact upload a yes consented to, { sessionIds, mode, unrouted, hiddenKinds, scannedAt }; null when the entry carries none or a malformed one.
+// The exact upload a yes consented to, { sessionIds, mode, unrouted, scannedAt }; null when the entry carries none or a malformed one.
 export function acceptedOf(entry) {
   const accepted = entry == null ? null : entry.accepted;
   if (accepted == null || typeof accepted !== 'object' || UPLOAD_MODES.indexOf(accepted.mode) === -1) return null;
@@ -138,13 +138,12 @@ export function acceptedOf(entry) {
   return acceptedShape(accepted);
 }
 
-// The stored shape of an accepted upload: unknown kinds hide all five and a missing scannedAt reads as null.
+// The stored shape of an accepted upload: a missing scannedAt reads as null.
 function acceptedShape(accepted) {
   return {
     sessionIds: accepted.sessionIds.slice(),
     mode: accepted.mode,
     unrouted: accepted.unrouted === true,
-    hiddenKinds: hiddenKindsOf(accepted.hiddenKinds),
     scannedAt: typeof accepted.scannedAt === 'string' ? accepted.scannedAt : null,
   };
 }
