@@ -31,7 +31,7 @@ Run `/mcp`, choose the `beezi-staging` server, then sign in. A browser window op
 
 ## What it connects to
 
-The plugin declares one MCP server, `beezi-staging`, at `https://beezi-api-staging.azurewebsites.net/api/mcp`. It sends the header `X-Beezi-Agent: copilot` so Beezi knows the request comes from GitHub Copilot. The plugin has no hooks, scripts or local code, and it sends nothing from your conversations. Its skills call only your personal summary. If you ask Copilot other questions about your Beezi analytics, it may use the server's other read-only tools, which return only what your Beezi role lets you see.
+The plugin declares one MCP server, `beezi-staging`, at `https://beezi-api-staging.azurewebsites.net/api/mcp`. It sends the header `X-Beezi-Agent: copilot` so Beezi knows the request comes from GitHub Copilot, and `X-Beezi-Plugin: light` so Beezi offers it only your personal summary. The plugin has no hooks, scripts or local code, and it sends nothing from your conversations. It can read only your personal summary; questions about other people are declined.
 
 ## The full Beezi plugin
 

@@ -5,7 +5,8 @@
       "type": "streamable-http",
       "url": "https://beezi-api-staging.azurewebsites.net/api/mcp",
       "headers": {
-        "X-Beezi-Agent": "copilot"
+        "X-Beezi-Agent": "copilot",
+        "X-Beezi-Plugin": "light"
       }
     }
   }
