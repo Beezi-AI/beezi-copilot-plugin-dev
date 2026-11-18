@@ -1,8 +1,10 @@
 // history-offer.mjs: the past-sessions offer. A scan counts every workspace of a row, prints one block (or a combined one for
 // several), then consents the no-ask ones and records the asked ones' decline; accept and decline answer it.
 import { startHistoryWorker } from '../../history/pending-trigger.mjs';
+import { isLive, markReported, readProgress } from '../../history/upload-progress.mjs';
 import { offerToken, readOfferScan, rememberDeclined } from '../../workspace/history-offer-record.mjs';
 import { pastSessionsFor } from '../../core/anon-target.mjs';
+import { sleep } from '../../core/async.mjs';
 import { UserError } from '../../core/errors.mjs';
 import { joinNames } from '../../core/text.mjs';
 import { pluginRoot } from '../../config/plugin-root.mjs';
@@ -14,6 +16,7 @@ import {
   SYNC_COMMAND, acceptLine, allChoice, combinedLines, combinedQuestion, declineLine, noAskLines, offerLines, progressLine,
 } from '../../ux/history-offer-lines.mjs';
 import { machineLine } from '../../ux/machine-lines.mjs';
+import { REST_LINE, doneLine, followUploads, plainLine } from '../../ux/upload-progress-view.mjs';
 import { parseTenantFlags, refParts } from '../tenant-flags.mjs';
 import { mayPersist, parseSessionFlag } from '../workspace/args.mjs';
 import {
@@ -27,6 +30,9 @@ const USAGE = 'Usage: history-offer.mjs --via <session-start|login|setup|sync> [
   + ' | decline --account <key> --tenant <id>[,<id>...]';
 const UNKNOWN_WORKSPACE_LINE = "✗ Beezi: this account's workspace isn't known yet. Start a new Copilot session or run /beezi-staging-login, then try again.";
 const CHANGED_LINE = `✗ Beezi: these past sessions changed after the question was shown, so nothing was uploaded. Run ${SYNC_COMMAND} to see them again.`;
+
+// "Upload now" follows the worker this long; an agent's tool times out soon after.
+const FOLLOW_CAP_MS = 100000;
 
 const pick = (value, fallback) => (value == null ? fallback : value);
 
@@ -203,18 +209,46 @@ async function consentShown(row, tenantId, token, deps) {
   return record;
 }
 
-// Tokens pair with the tenants by position; one that doesn't match skips only its workspace. The worker starts once.
+const capLine = (record) => `✓ ${record.processed} of ${record.total} past sessions uploaded to ${record.workspace}; the rest keeps uploading in the background`;
+
+// The worker's records of the accepted workspaces as lines; the last line closes the follow: a done line, the cap line or REST_LINE.
+async function followAccepted(key, consented, sinceMs, deps) {
+  let last = null;
+  const { finished, failed } = await pick(deps.follow, followUploads)({
+    key,
+    tenantIds: consented.map((item) => item.tenantId),
+    sinceMs,
+    capMs: FOLLOW_CAP_MS,
+    onUpdate: (record) => {
+      last = record;
+      console.log(plainLine(record));
+    },
+    onDone: (record) => {
+      last = null;
+      console.log(doneLine(record));
+      try { markReported(key, record.tenantId); } catch { /* best-effort: a lost mark only repeats the line at the next session start */ }
+    },
+    read: readProgress,
+    isLive,
+    now: pick(deps.now, Date.now),
+    sleep: pick(deps.sleep, sleep),
+  });
+  if (finished.length < consented.length) console.log(last == null || failed === true ? REST_LINE : capLine(last));
+}
+
+// Tokens pair with the tenants by position; one that doesn't match skips only its workspace. The worker starts once, then its progress is followed.
 async function accept({ row, tenantIds, sessionId }, tokenList, deps) {
   if (!(await mayPersist('uploading past sessions', sessionId))) return;
   const tokens = tokenList == null ? [] : refParts(tokenList);
   const consented = [];
   for (let i = 0; i < tenantIds.length; i += 1) {
     const record = await consentShown(row, tenantIds[i], tokens[i], deps);
-    if (record != null) consented.push({ workspace: workspaceName(row, tenantIds[i]), count: record.count });
+    if (record != null) consented.push({ tenantId: tenantIds[i], workspace: workspaceName(row, tenantIds[i]), count: record.count });
   }
   if (consented.length === 0) return;
-  await startHistoryWorker(row.key, deps);
-  console.log(backgroundLine(consented));
+  const sinceMs = pick(deps.now, Date.now)();
+  if (await startHistoryWorker(row.key, deps)) await followAccepted(row.key, consented, sinceMs, deps);
+  else console.log(backgroundLine(consented));
 }
 
 async function decline({ row, tenantIds }) {

@@ -1,6 +1,7 @@
 // The SessionStart hook body: workspace prompt, session-start notices and the one relayed line, as additionalContext.
 import { importHookModule as _importHookModule } from '../host/hook-runner.mjs';
 import { relayLine, relayInstruction } from '../host/session-start-output.mjs';
+import { readProgress } from '../history/upload-progress.mjs';
 
 // Notices from the workspace prompt module, appended after runSessionStart's own.
 async function promptNotices(prompt, input) {
@@ -29,7 +30,7 @@ async function joinedNotices(joined, input, asking) {
     if (joined != null && asking && input.source !== 'resume') offerPrompt = await joined.buildHistoryOfferPrompt(input);
   } catch { /* offered again next session */ }
   try {
-    if (joined != null) historyNotice = await joined.buildHistoryNotice(input);
+    if (joined != null) historyNotice = await joined.buildHistoryNotice(input, { readProgress });
   } catch { /* shown next session */ }
   return { joinedPrompt, offerPrompt, historyNotice };
 }

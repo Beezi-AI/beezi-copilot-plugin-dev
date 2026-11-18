@@ -30,7 +30,7 @@ and go to Step 2.
 Arguments: the text the user typed after the skill's slash command in the message that started this
 skill; none if they typed only the command. `upload` answers Step 2's list from an earlier run of
 this skill in this conversation: after Step 0, run the text of each `accept-command=` line of that
-earlier output (never an `accept-all-command=` line) EXACTLY, once each, write each command's line verbatim, and stop. When this conversation
+earlier output (never an `accept-all-command=` line) EXACTLY, once each, write each command's last line verbatim (it shows progress while the upload runs), and stop. When this conversation
 has no such output, say `upload` answers nothing here and run the skill as if no argument was
 given. When it names an account (an email or key), `<key>` below
 is that account's key from `node "<plugin-root>/scripts/accounts.mjs"` (for you only).
@@ -171,7 +171,7 @@ means there is nothing to upload now: say so in one sentence. For each block, in
 - `<offer account="<key>" tenant="<id>">` … `</offer>`: one workspace that asks first. Write its lines
   before `question=`, when it has any, verbatim inside one such code block, then ask the `question=`
   text with `ask_user`, with the choices "Upload now" and "Not now". "Upload now" → run its
-  `accept-command=` text EXACTLY and write its line verbatim; anything else, a dismissed question or no
+  `accept-command=` text EXACTLY, which shows the upload's progress for up to about 100 seconds, and write its last line verbatim; anything else, a dismissed question or no
   answer → run its `decline-command=` text EXACTLY and write its line verbatim.
 - `<offers account="<key>">` … `</offers>`: several workspaces. Write its lines before its first
   `question=` or `<offer>` line (or up to `</offers>`) verbatim inside one such code block. When a
@@ -193,5 +193,6 @@ tell the user to run `/beezi-staging-sync upload` to upload them. Run no `accept
 `accept-all-command=`, `decline-command=` or `decline-all-command=` then.
 
 Never answer the question yourself, never run an `accept-command=` without "Upload now" or an
-`accept-all-command=` without the `all-choice=` answer. An upload runs in the background, and a later
-Copilot session shows its result.
+`accept-all-command=` without the `all-choice=` answer. An accepted upload runs in the background: its
+command follows it for up to about 100 seconds, and a later Copilot session shows the result of what is
+still running.

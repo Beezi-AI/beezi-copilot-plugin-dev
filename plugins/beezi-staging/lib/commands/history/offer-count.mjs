@@ -3,12 +3,13 @@ import { prepareRowScan } from '../../history/offer-scan.mjs';
 import { offerScan, retryWhileBusy } from '../../history/setup-places.mjs';
 import { createRunCache as _createRunCache } from '../../history/run-cache.mjs';
 import { startHistoryWorker } from '../../history/pending-trigger.mjs';
+import { workspaceName } from '../../history/pending-history-run.mjs';
 import { declinedIds, forgetDeclined, takeAnsweredSetup, writeOfferScan } from '../../workspace/history-offer-record.mjs';
 import { readTrackingState } from '../../state/tracking.mjs';
 import { anonymizationFor, kindsOf, pastSessionsFor, unionOf } from '../../core/anon-target.mjs';
 import { UserError } from '../../core/errors.mjs';
 import { INDEX_LOCK_BUSY } from '../../accounts/index-store.mjs';
-import { isMultiTenant, offerableTenantIds, tenantById } from '../../workspace/tenants.mjs';
+import { isMultiTenant, offerableTenantIds } from '../../workspace/tenants.mjs';
 import { OfferState, pendingHistoryOf } from '../../workspace/pending-history.mjs';
 import { clearHistoryOfferPlaces, consentPastSessions, stampHistoryOffer } from '../../workspace/settings-store.mjs';
 import { SYNC_COMMAND } from '../../ux/history-offer-lines.mjs';
@@ -17,11 +18,7 @@ import { mayPersist } from '../workspace/args.mjs';
 
 const pick = (value, fallback) => (value == null ? fallback : value);
 
-export function workspaceName(row, tenantId) {
-  const tenant = tenantById(row, tenantId);
-  if (tenant != null && tenant.name) return tenant.name;
-  return row.tenantName || tenantId;
-}
+export { workspaceName };
 
 export const uncheckedLine = (row, tenantId) => `✗ Beezi: couldn't check past sessions for ${workspaceName(row, tenantId)} right now. Run ${SYNC_COMMAND} later.`;
 
@@ -117,7 +114,7 @@ export async function consentOffer(row, tenantId, record, deps) {
   } catch { /* best-effort: a stale decline only hides these ids from a session-start offer */ }
 }
 
-// Owes each counted workspace the listed sessions routed to it now, under the kinds the listing showed it; → { owed: their id lists, failed: a consent timed out }.
+// Owes each counted workspace the listed sessions routed to it now, under the kinds the listing showed it; → { owed: [{ tenantId, sessionIds }], failed: a consent timed out }.
 async function oweListed(row, counted, setup, deps) {
   const listed = new Set(setup.sessionIds);
   const owed = [];
@@ -126,7 +123,7 @@ async function oweListed(row, counted, setup, deps) {
     const shownKinds = setup.kinds[item.tenantId];
     const sessionIds = item.record.sessionIds.filter((id) => listed.has(id));
     if (shownKinds == null || sessionIds.length === 0) continue;
-    if (await lockedWrite(() => consentOffer(row, item.tenantId, { ...item.record, sessionIds, shownKinds }, deps))) owed.push(sessionIds);
+    if (await lockedWrite(() => consentOffer(row, item.tenantId, { ...item.record, sessionIds, shownKinds }, deps))) owed.push({ tenantId: item.tenantId, sessionIds });
     else {
       console.log(uncheckedLine(row, item.tenantId));
       failed = true;
@@ -135,11 +132,11 @@ async function oweListed(row, counted, setup, deps) {
   return { owed, failed };
 }
 
-// `uploading=<N> workspaces=<n>` with N the distinct sessions owed; a failure sets the exit status.
+// `uploading=<N> workspaces=<n> tenants=<id,…>` with N the distinct sessions owed and the owed workspaces in order; a failure sets the exit status.
 function printUploading(owed, failed) {
   const ids = new Set();
-  owed.forEach((sessionIds) => sessionIds.forEach((id) => ids.add(id)));
-  console.log(machineLine([['uploading', ids.size], ['workspaces', owed.length]]));
+  owed.forEach((item) => item.sessionIds.forEach((id) => ids.add(id)));
+  console.log(machineLine([['uploading', ids.size], ['workspaces', owed.length], ['tenants', owed.map((item) => item.tenantId).join(',')]]));
   if (failed) process.exitCode = 1;
 }
 

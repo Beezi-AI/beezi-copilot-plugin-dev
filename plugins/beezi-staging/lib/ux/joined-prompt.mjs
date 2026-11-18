@@ -1,6 +1,6 @@
 // SessionStart's joined-workspace ask for attended sessions, the one-time line for a finished history upload, and the past-sessions offer prompt.
 import { joinTenantNames, newTenantsOf, offerableTenantIds } from '../workspace/tenants.mjs';
-import { OfferAction, offerAction, offerTrackingDisabled, resultLine, takeResults } from '../workspace/pending-history.mjs';
+import { HistoryStatus, OfferAction, offerAction, offerTrackingDisabled, resultLine, takeResults } from '../workspace/pending-history.mjs';
 import { readTrackingState } from '../state/tracking.mjs';
 import { pastSessionsFor } from '../core/anon-target.mjs';
 import { takeHistoryResults as _takeHistoryResults } from '../workspace/settings-store.mjs';
@@ -64,7 +64,7 @@ function historyOfferText(rows, root, sessionId) {
     'the all-choice runs only its accept-all-command= text EXACTLY and shows every line it prints; "Not now", any other answer, a dismissed question or no answer runs only its decline-all-command= text EXACTLY and shows nothing from it; neither runs a command of its <offer> blocks.',
     'Only on "Choose for each", or with no such question= line, ask each <offer> block inside it as below.',
     'For each <offer> block: write its lines before question=, when it has any, inside one such code block, then ask with the ask_user tool the question= text with the choices "Upload now" and "Not now".',
-    'On "Upload now" run that block\'s accept-command= text EXACTLY and show its first line.',
+    'On "Upload now" run that block\'s accept-command= text EXACTLY and show its last line.',
     'On any other answer, a dismissed question or no answer, run its decline-command= text EXACTLY and show nothing from it.',
     'Never answer a question yourself. Then continue with the user\'s request.',
   ].join(' ');
@@ -81,19 +81,32 @@ export async function buildHistoryOfferPrompt(input, deps = {}) {
   return rows.length === 0 ? null : historyOfferText(rows, pluginRoot(deps), sessionId);
 }
 
-// SessionStart on startup or new: { text, mark } for the oldest finished history upload, or null; mark() takes exactly that result.
+// A sent result whose done line a foreground follow already showed; `readProgress` comes from the caller (ux may not import history).
+function reportedAlready(row, result, readProgress) {
+  if (result.status !== HistoryStatus.SENT) return false;
+  const record = readProgress(row.key, result.tenantId);
+  return record != null && record.reported === true;
+}
+
+// SessionStart on startup or new: { text, mark } for the oldest finished history upload not yet reported, or null; mark() takes it and the reported ones before it.
 export async function buildHistoryNotice(input, deps = {}) {
   if (input == null) return null;
   if (input.source != null && ASK_SOURCES.indexOf(input.source) === -1) return null;
   const take = deps.takeHistoryResults == null ? _takeHistoryResults : deps.takeHistoryResults;
+  const readProgress = deps.readProgress == null ? () => null : deps.readProgress;
   const rows = await linkedRows(deps);
   for (const row of rows) {
-    // takeResults on a copy peeks at the result mark() will take, skipping malformed entries the same way.
-    const first = takeResults({ historyResults: row.historyResults }, 1)[0];
-    if (first == null) continue;
+    // takeResults on a copy peeks at the results mark() will take, skipping malformed entries the same way.
+    const results = takeResults({ historyResults: row.historyResults });
+    const at = results.findIndex((result) => !reportedAlready(row, result, readProgress));
+    // Every result already shown: taken now, so a later upload's unreported record never revives them.
+    if (at === -1) {
+      if (results.length > 0) await take(row.key, results.length).catch(() => []);
+      continue;
+    }
     const prefix = rows.length > 1 ? `Beezi (${emailOf(row)})` : 'Beezi';
-    const text = resultLine(first, { prefix, nameOf: (id) => nameOf(row, id), syncName: SYNC_SKILL });
-    return { text, mark: () => take(row.key, 1).catch(() => []) };
+    const text = resultLine(results[at], { prefix, nameOf: (id) => nameOf(row, id), syncName: SYNC_SKILL });
+    return { text, mark: () => take(row.key, at + 1).catch(() => []) };
   }
   return null;
 }

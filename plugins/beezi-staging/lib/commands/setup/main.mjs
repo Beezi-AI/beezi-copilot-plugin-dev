@@ -17,6 +17,7 @@ export const STOPPED = 'Setup stopped. Run /beezi-staging-login in GitHub Copilo
 // Copilot keeps these out of its hooks' environment (GH_TOKEN still reaches them), so the steps run without them too.
 export const HIDDEN_TOKEN_VARS = ['COPILOT_GITHUB_TOKEN', 'GITHUB_TOKEN'];
 const SHOW_CURSOR = '\x1b[?25h';
+const CLEAR_LINE = '\r\x1b[2K';
 const MARGIN = '  ';
 
 export function realDeps(root) {
@@ -74,6 +75,7 @@ export function setupMain(deps) {
   }
   let run = null;
   let ask = null;
+  let following = null;
   let done;
   // A synchronous throw from here on ends in the same stop line as a rejected wizard.
   try {
@@ -82,7 +84,12 @@ export function setupMain(deps) {
     // Shows the cursor again on process exit.
     if (output.isTTY) deps.onExit(() => { output.write(SHOW_CURSOR); });
     // Shared by SIGINT and Ctrl+C inside an arrow-key menu; a drawn activity line is cleared first.
+    // While an upload is followed, Ctrl+C ends only the following.
     const stop = () => {
+      if (following !== null) {
+        following.stopped = true;
+        return;
+      }
       if (run !== null) run.clearActivity();
       print('');
       print(STOPPED);
@@ -91,14 +98,25 @@ export function setupMain(deps) {
     deps.onInterrupt(stop);
     const interactive = canReadKeys({ input, output, env: deps.env });
     ask = deps.createPrompt({ input, output, style, interactive, onInterrupt: stop, format });
+    const activity = output.isTTY === true && deps.env.TERM !== 'dumb';
     run = deps.createRunner({
       root: deps.root, cwd, env: hookVisibleEnv(deps.env), sessionKeys: SESSION_KEYS, paint: format,
-      output, activity: output.isTTY === true && deps.env.TERM !== 'dumb', margin: MARGIN, accent: style.accent,
+      output, activity, margin: MARGIN, accent: style.accent,
     });
+    // Redraws one line in place, never wrapped: CLEAR_LINE clears only the last row, so the caller cuts it to drawColumns.
+    const draw = (line) => { output.write(`${CLEAR_LINE}${paint(style, indent(line))}`); };
+    // The line's room after the margin, one short of the width so the cursor never wraps.
+    const drawColumns = (output.columns || 80) - 1 - MARGIN.length;
+    // Runs task(shouldStop) with Ctrl+C setting shouldStop instead of stopping the setup.
+    const whileFollowing = (task) => {
+      const flag = { stopped: false };
+      following = flag;
+      return task(() => flag.stopped).finally(() => { following = null; });
+    };
     const progress = (label) => { run.setLabel(label); };
     const envToken = copilotAuthEnv(deps.env).envToken;
     const notices = HIDDEN_TOKEN_VARS.indexOf(envToken) !== -1 ? [hiddenTokenLine(envToken)] : [];
-    done = deps.runSetup({ run, ask, print, progress, style, notices, env: deps.env, platform: deps.platform });
+    done = deps.runSetup({ run, ask, print, progress, style, notices, env: deps.env, platform: deps.platform, activity, draw, drawColumns, whileFollowing });
   } catch (error) {
     if (ask !== null) ask.close();
     print(`✗ ${friendlyMessage(error)}`);
