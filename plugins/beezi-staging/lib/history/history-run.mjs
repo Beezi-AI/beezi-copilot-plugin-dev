@@ -202,6 +202,8 @@ async function replayCandidates(run, candidates, startCursors) {
       const group = await replayOne(run, entry, run.syncMode ? startCursors.get(entry.sessionId) : 0);
       if (group != null) await queue.add(group);
     }
+    // Every session is read: the follower shows the finishing line while the last batches upload.
+    if (!run.halted) progress(run);
   } finally {
     // A throw from the loop itself still waits for every flight, so none writes after the lease is released.
     await queue.settle();

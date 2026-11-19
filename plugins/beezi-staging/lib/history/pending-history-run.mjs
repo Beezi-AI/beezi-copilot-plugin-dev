@@ -15,6 +15,9 @@ import { AccountStatus, listAccounts } from '../accounts/index-store.mjs';
 
 const REAL_ACCOUNTS = Object.freeze({ AccountStatus, listAccounts, notePendingAttempt, settlePendingHistory });
 
+// A long final upload writes no progress; the heartbeat keeps its record fresh for the followers.
+const HEARTBEAT_MS = 15000;
+
 const isSealed = (result) => result.reason === 'already-completed' || result.halt === BackfillHalt.ALREADY_COMPLETED;
 
 // One run's meaning for the marker; a session the run found busy waits like a recent one, and a sealed pull has nothing left to take.
@@ -80,11 +83,18 @@ function runOf(result, entry, io) {
 // One workspace's run → { outcome, sent, skipped }, written to its progress record; a throwing run is a failed one.
 async function runOne(key, entry, options, io, runCache, writer) {
   let counts = { processed: 0, total: 0, sent: 0 };
+  let reported = false;
   const onProgress = (p) => {
+    reported = true;
     counts = { processed: p.processed, total: p.total, sent: p.sessionsImported };
     quietly(() => writer.update(counts));
   };
-  const run = runOf(await io.runAudit({ runCache, onProgress }, { ...options, account: key }).catch(() => null), entry, io);
+  // Before the first progress step the counts are 0/0, which would overwrite the record of a run holding the lock.
+  const heartbeat = setInterval(() => { if (reported) quietly(() => writer.update(counts)); }, HEARTBEAT_MS);
+  heartbeat.unref();
+  const result = await io.runAudit({ runCache, onProgress }, { ...options, account: key }).catch(() => null);
+  clearInterval(heartbeat);
+  const run = runOf(result, entry, io);
   // A run that met another run's lock leaves that run's record alone.
   if (run.outcome === RunOutcome.BUSY) return run;
   const final = { processed: counts.processed, total: counts.total, sent: run.sent };

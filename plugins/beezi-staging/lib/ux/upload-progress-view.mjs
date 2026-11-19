@@ -6,6 +6,10 @@ const ASCII_GLYPHS = { done: '#', left: '-' };
 const POLL_MS = 1000;
 const FRESH_SLACK_MS = 5000;
 const FOLLOW_STALE_MS = 120000;
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const ASCII_SPINNER_FRAMES = ['|', '/', '-', '\\'];
+const SPINNER_COLUMNS = 2;
+const FINISHING_PLAIN = 'Beezi: all sessions read, finishing upload…';
 
 export const REST_LINE = 'Beezi: the rest keeps uploading in the background';
 
@@ -16,10 +20,8 @@ export function progressBar(processed, total, { ascii = false } = {}) {
 }
 
 // Cut to `width` columns when given: the workspace name is shortened with '…', and a line still too long is cut at the width.
-export function barLine(record, { ascii, width } = {}) {
-  const bar = progressBar(record.processed, record.total, { ascii });
-  const lineFor = (name) => `Uploading past sessions to ${name}  ${bar}  ${record.processed}/${record.total}`;
-  const name = Array.from(String(record.workspace));
+function fitted(lineFor, workspace, width) {
+  const name = Array.from(String(workspace));
   const full = lineFor(name.join(''));
   const over = Array.from(full).length - width;
   if (width == null || over <= 0) return full;
@@ -28,8 +30,26 @@ export function barLine(record, { ascii, width } = {}) {
   return Array.from(lineFor('…')).slice(0, Math.max(width, 0)).join('');
 }
 
+export function barLine(record, { ascii, width } = {}) {
+  const bar = progressBar(record.processed, record.total, { ascii });
+  return fitted((name) => `Uploading past sessions to ${name}  ${bar}  ${record.processed}/${record.total}`, record.workspace, width);
+}
+
+// Every session is read and the last uploads are still running.
+const isFinishing = (record) => record.total > 0 && record.processed >= record.total;
+
+// The bar line, or the finishing line once every session is read, behind a spinner frame that moves with `tick`.
+export function liveLine(record, { ascii, width, tick = 0 } = {}) {
+  const frames = ascii ? ASCII_SPINNER_FRAMES : SPINNER_FRAMES;
+  const bodyWidth = width == null ? width : width - SPINNER_COLUMNS;
+  const body = isFinishing(record)
+    ? fitted((name) => `Finishing upload to ${name}`, `${record.workspace}…`, bodyWidth)
+    : barLine(record, { ascii, width: bodyWidth });
+  return `${frames[tick % frames.length]} ${body}`;
+}
+
 export function plainLine(record) {
-  return `Beezi: ${record.processed}/${record.total} sessions read…`;
+  return isFinishing(record) ? FINISHING_PLAIN : `Beezi: ${record.processed}/${record.total} sessions read…`;
 }
 
 export function doneLine(record) {
@@ -43,12 +63,13 @@ function isFresh(record, sinceMs) {
 
 // `read` and `isLive` come from lib/history/upload-progress.mjs, which ux may not import.
 export async function followUploads({
-  key, tenantIds, sinceMs, capMs = Infinity, shouldStop = () => false, onUpdate, onDone, read, isLive, now = Date.now, sleep,
+  key, tenantIds, sinceMs, capMs = Infinity, shouldStop = () => false, onUpdate, onTick = () => {}, onDone, read, isLive, now = Date.now, sleep,
 }) {
   const finished = [];
   const startMs = now();
   let lastSeenMs = startMs;
   let lastProcessed = null;
+  let tick = 0;
   while (finished.length < tenantIds.length) {
     if (shouldStop()) return { finished, timedOut: false, stopped: true };
     const nowMs = now();
@@ -67,6 +88,8 @@ export async function followUploads({
     if (fresh && isLive(record, nowMs)) {
       lastSeenMs = nowMs;
       if (record.processed !== lastProcessed) onUpdate(record);
+      onTick(record, tick);
+      tick += 1;
       lastProcessed = record.processed;
     }
     if (nowMs - lastSeenMs >= FOLLOW_STALE_MS) return { finished, timedOut: false, stopped: true };
