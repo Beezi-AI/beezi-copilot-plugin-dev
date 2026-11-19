@@ -1,7 +1,7 @@
 // The last steps of the terminal setup: the consented past-sessions upload and the machine defaults.
 import { sleep } from '../../core/async.mjs';
 import { isLive, markReported, readProgress } from '../../history/upload-progress.mjs';
-import { REST_LINE, barLine, doneLine, followUploads, plainLine } from '../../ux/upload-progress-view.mjs';
+import { REST_LINE, doneLine, followUploads, liveLine, plainLine } from '../../ux/upload-progress-view.mjs';
 import { lastLine, report, token } from './output.mjs';
 
 // Off a terminal (an agent's tool runs /beezi-dev-login) following stops before the tool times out; the worker carries on.
@@ -16,7 +16,7 @@ function printDone(ctx, key, record) {
   try { markReported(key, record.tenantId); } catch { /* best-effort */ }
 }
 
-// Follows the worker's records of tenantIds: a bar redrawn in place on a terminal, plain lines otherwise.
+// Follows the worker's records of tenantIds: a spinner and bar redrawn in place on every poll on a terminal, plain lines per change otherwise.
 async function followPast(ctx, key, tenantIds, sinceMs, now) {
   const ascii = ctx.platform === 'win32';
   const watch = ctx.whileFollowing || unwatched;
@@ -26,7 +26,8 @@ async function followPast(ctx, key, tenantIds, sinceMs, now) {
     sinceMs,
     capMs: ctx.activity ? Infinity : PIPED_CAP_MS,
     shouldStop,
-    onUpdate: (record) => (ctx.activity ? ctx.draw(barLine(record, { ascii, width: ctx.drawColumns })) : ctx.print(plainLine(record))),
+    onUpdate: (record) => { if (!ctx.activity) ctx.print(plainLine(record)); },
+    onTick: (record, tick) => { if (ctx.activity) ctx.draw(liveLine(record, { ascii, width: ctx.drawColumns, tick })); },
     onDone: (record) => printDone(ctx, key, record),
     read: readProgress,
     isLive,

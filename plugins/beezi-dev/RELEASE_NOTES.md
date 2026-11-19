@@ -1,5 +1,11 @@
 # Beezi plugin release notes
 
+## 0.4.4 (2026-11-19) — A long upload shows it is still working
+
+### Improved
+- **The upload keeps moving** — while your past sessions upload, the setup bar now has a spinner that turns every second. Once every session is read, the bar gives way to `Finishing upload to Acme…` until the last ones are sent, so a long final upload no longer looks stuck at `225/225`. Off a terminal you get one `Beezi: all sessions read, finishing upload…` line at that point.
+- **A long upload stays live** — the upload refreshes its progress while it runs, so following it no longer gives up on a big final batch.
+
 ## 0.4.3 (2026-11-18) — Past sessions follow the owner's settings
 
 ### Improved
